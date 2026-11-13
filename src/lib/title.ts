@@ -3,7 +3,7 @@ export const TITLE_MAX_LENGTH = 200;
 export type TitleResult = { ok: true; title: string } | { ok: false; error: string };
 
 // Control characters and line breaks become spaces; runs of whitespace collapse.
-// eslint-disable-next-line no-control-regex
+ 
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
 
 /**

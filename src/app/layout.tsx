@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
-import { THEME_COOKIE, parseTheme } from "@/lib/preferences";
+import { AppShell } from "@/components/app-shell";
+import { SIDEBAR_COOKIE, THEME_COOKIE, parseSidebarCollapsed, parseTheme } from "@/lib/preferences";
+import { listDocuments } from "@/server/documents";
 import { codeFont, documentFont, uiFont } from "./fonts";
 import "./globals.css";
 
@@ -15,8 +17,9 @@ export const viewport: Viewport = {
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  const cookieStore = await cookies();
+  const [cookieStore, documents] = await Promise.all([cookies(), listDocuments()]);
   const theme = parseTheme(cookieStore.get(THEME_COOKIE)?.value);
+  const sidebarCollapsed = parseSidebarCollapsed(cookieStore.get(SIDEBAR_COOKIE)?.value);
 
   return (
     <html
@@ -24,7 +27,11 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       data-theme={theme}
       className={`${uiFont.variable} ${documentFont.variable} ${codeFont.variable}`}
     >
-      <body>{children}</body>
+      <body>
+        <AppShell documents={documents} initialTheme={theme} initialSidebarCollapsed={sidebarCollapsed}>
+          {children}
+        </AppShell>
+      </body>
     </html>
   );
 }
