@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { createDocument, expectSaved, mod, setTitle, uniqueTitle, waitForEditorSelection } from "./helpers";
 
 test("formatted content typed with markdown shortcuts persists after reload", async ({ page }) => {

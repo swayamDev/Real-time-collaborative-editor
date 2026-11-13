@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   checks:
-    name: Typecheck, lint, unit tests
+    name: Typecheck, lint, unit and Worker tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -25,6 +25,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      # Durable Object tests run inside the Workers runtime (workerd).
+      - run: pnpm test:sync
 
   e2e:
     name: End-to-end tests
@@ -47,6 +49,11 @@ jobs:
     env:
       DATABASE_URL: postgres://brahma:brahma@localhost:5432/brahma
       DATABASE_URL_UNPOOLED: postgres://brahma:brahma@localhost:5432/brahma
+      # Must match e2e/sync-server.ts. NEXT_PUBLIC_SYNC_URL is baked in at build time.
+      NEXT_PUBLIC_SYNC_URL: ws://localhost:8788
+      SYNC_INTERNAL_URL: http://localhost:8788
+      SYNC_INTERNAL_SECRET: e2e-secret
+      WRANGLER_SEND_METRICS: "false"
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -59,6 +66,7 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm build
       - run: pnpm check:bundles
+      # Playwright global setup starts the sync Worker with wrangler dev.
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()

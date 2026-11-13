@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { createDocument, expectSaved, setTitle, sidebarRow, uniqueTitle } from "./helpers";
 
 test("renames a document from the sidebar", async ({ page }) => {
@@ -77,8 +77,17 @@ test("the list is sorted by last edit", async ({ page }) => {
   await expectSaved(page);
   await expect(rows.first()).toContainText(older);
 
-  await page.reload();
-  await expect(rows.first()).toContainText(older);
+  // A fresh page reads the order from Postgres, which the sync server
+  // updates with each snapshot, a few seconds after the last edit at most.
+  await expect
+    .poll(
+      async () => {
+        await page.reload();
+        return rows.first().innerText();
+      },
+      { timeout: 20_000, intervals: [1_000] },
+    )
+    .toContain(older);
 });
 
 test("a missing document shows a plain not found page", async ({ page }) => {

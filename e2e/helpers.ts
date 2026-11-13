@@ -18,8 +18,11 @@ export async function createDocument(page: Page): Promise<string> {
   return page.url().split("/d/")[1];
 }
 
+/** Saved, and every local edit acknowledged by the sync server. */
 export async function expectSaved(page: Page): Promise<void> {
-  await expect(page.getByTestId("save-status")).toHaveText("Saved", { timeout: 15_000 });
+  const status = page.getByTestId("sync-status");
+  await expect(status).toHaveText("Saved", { timeout: 15_000 });
+  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 15_000 });
 }
 
 export async function setTitle(page: Page, title: string): Promise<void> {
