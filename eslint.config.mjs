@@ -32,7 +32,7 @@ const eslintConfig = defineConfig([
     ],
     rules: { "no-restricted-imports": ["error", CLIENT_ONLY_MODULES] },
   },
-  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", "workers/*/.wrangler/**"]),
+  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", "workers/*/.wrangler/**", "workers/*/worker-configuration.d.ts"]),
 ]);
 
 export default eslintConfig;

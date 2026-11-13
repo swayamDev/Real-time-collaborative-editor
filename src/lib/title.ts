@@ -1,10 +1,8 @@
-export const TITLE_MAX_LENGTH = 200;
+import { TITLE_MAX_LENGTH, cleanTitle } from "@brahma/protocol";
+
+export { TITLE_MAX_LENGTH };
 
 export type TitleResult = { ok: true; title: string } | { ok: false; error: string };
-
-// Control characters and line breaks become spaces; runs of whitespace collapse.
- 
-const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
 
 /**
  * Normalize and validate a document title. An empty title is allowed and is
@@ -14,7 +12,7 @@ export function validateTitle(input: unknown): TitleResult {
   if (typeof input !== "string") {
     return { ok: false, error: "Title must be text." };
   }
-  const title = input.replace(CONTROL_CHARS, " ").replace(/\s+/g, " ").trim();
+  const title = cleanTitle(input);
   if ([...title].length > TITLE_MAX_LENGTH) {
     return { ok: false, error: `Titles can be up to ${TITLE_MAX_LENGTH} characters.` };
   }

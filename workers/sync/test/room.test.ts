@@ -7,7 +7,7 @@ import {
   encodeSyncStep1,
   encodeUpdate,
 } from "@brahma/protocol";
-import { SELF, env, evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { SELF, env, evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { Awareness, encodeAwarenessUpdate } from "y-protocols/awareness";
 import * as Y from "yjs";
@@ -221,5 +221,97 @@ describe("hibernation", () => {
 
     const late = await joined(id);
     expect(late.text()).toBe("after wake: survives eviction");
+  });
+});
+
+describe("snapshots to Postgres", () => {
+  function alarmAt(id: string): Promise<number | null> {
+    return runInDurableObject(stubFor(id), (_instance, state) => state.storage.getAlarm());
+  }
+
+  it("debounces a snapshot after edits and copies content and title", async () => {
+    const id = seed("Old title");
+    const a = await joined(id);
+    a.edit((doc) => {
+      doc.getText("body").insert(0, "snapshot me");
+      const title = doc.getText("title");
+      title.delete(0, title.length);
+      title.insert(0, "  New\ttitle  ");
+    });
+    await a.until(() => a.last("ack")!.count >= 2, "stored");
+
+    const due = await alarmAt(id);
+    expect(due).not.toBeNull();
+    expect(due! - Date.now()).toBeGreaterThan(500);
+    expect(due! - Date.now()).toBeLessThanOrEqual(2_000);
+
+    expect(await runDurableObjectAlarm(stubFor(id))).toBe(true);
+    const row = memoryStore.rows.get(id)!;
+    const saved = new Y.Doc();
+    Y.applyUpdate(saved, row.state);
+    expect(saved.getText("body").toString()).toBe("snapshot me");
+    // The column gets the cleaned title, as Phase 1 validation produced.
+    expect(row.title).toBe("New title");
+  });
+
+  it("caps the debounce at ten seconds after the oldest unsaved edit", async () => {
+    const id = seed();
+    const a = await joined(id);
+    a.edit((doc) => doc.getText("body").insert(0, "x"));
+    await a.until(() => a.last("ack")!.count >= 2, "stored");
+    // Pretend the oldest unsaved edit happened 9.5 seconds ago.
+    await runInDurableObject(stubFor(id), (_instance, state) => {
+      state.storage.sql.exec("UPDATE meta SET value = ? WHERE key = 'dirty_since'", String(Date.now() - 9_500));
+    });
+    a.edit((doc) => doc.getText("body").insert(0, "y"));
+    await a.until(() => a.last("ack")!.count >= 3, "stored again");
+    expect((await alarmAt(id))! - Date.now()).toBeLessThanOrEqual(600);
+  });
+
+  it("snapshots immediately when the last client leaves", async () => {
+    const id = seed();
+    const a = await joined(id);
+    a.edit((doc) => doc.getText("body").insert(0, "leaving"));
+    const left = Date.now();
+    a.close();
+
+    // Well under the 2 second debounce: the alarm was set to fire now.
+    const savedText = () => {
+      const saved = new Y.Doc();
+      Y.applyUpdate(saved, memoryStore.rows.get(id)!.state);
+      return saved.getText("body").toString();
+    };
+    while (savedText() !== "leaving") {
+      if (Date.now() - left > 1_500) throw new Error("No snapshot after the last client left");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  });
+
+  it("keeps the edits dirty and retries when Postgres fails", async () => {
+    const id = seed();
+    const a = await joined(id);
+    a.edit((doc) => doc.getText("body").insert(0, "retry me"));
+    await a.until(() => a.last("ack")!.count >= 2, "stored");
+
+    memoryStore.failNextSave = true;
+    await expect(runInDurableObject(stubFor(id), (instance) => instance.alarm())).rejects.toThrow();
+    await runInDurableObject(stubFor(id), (instance) => instance.alarm());
+
+    const saved = new Y.Doc();
+    Y.applyUpdate(saved, memoryStore.rows.get(id)!.state);
+    expect(saved.getText("body").toString()).toBe("retry me");
+  });
+
+  it("deletes the room when the Postgres row is gone", async () => {
+    const id = seed();
+    const a = await joined(id);
+    a.edit((doc) => doc.getText("body").insert(0, "orphan"));
+    await a.until(() => a.last("ack")!.count >= 2, "stored");
+    memoryStore.rows.delete(id);
+
+    await runInDurableObject(stubFor(id), (instance) => instance.alarm());
+    await a.until(() => a.closed !== null, "closed");
+    expect(a.closed?.code).toBe(4410);
+    expect(await alarmAt(id)).toBeNull();
   });
 });

@@ -14,6 +14,7 @@ import {
   encodeSyncStep1,
   encodeSyncStep2,
   encodeUpdate,
+  titleForColumn,
 } from "@brahma/protocol";
 import { DurableObject } from "cloudflare:workers";
 import * as Y from "yjs";
@@ -25,6 +26,10 @@ import { type SnapshotStore, createSnapshotStore } from "./store";
 export const BATCH_MS = 150;
 /** Compact the update log into the snapshot after this many batches. */
 export const COMPACT_AFTER_BATCHES = 100;
+/** Snapshot to Postgres this long after the last edit... */
+export const SNAPSHOT_DEBOUNCE_MS = 2_000;
+/** ...but no later than this after the oldest edit not yet in Postgres. */
+export const SNAPSHOT_MAX_WAIT_MS = 10_000;
 
 /** Per-socket state that must survive hibernation. Kept small (2 KB limit). */
 interface Attachment {
@@ -55,6 +60,8 @@ export class DocumentRoom extends DurableObject<Env> {
   private pendingUpdates: Uint8Array[] = [];
   private pendingAcks = new Set<WebSocket>();
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Batches written since this instance started; detects edits during a snapshot. */
+  private writes = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -251,12 +258,72 @@ export class DocumentRoom extends DurableObject<Env> {
     this.pendingAcks.clear();
   }
 
-  /** Hook for snapshot scheduling. */
-  protected afterWrite(): void {}
+  // Snapshots to Postgres
 
-  /** Hook for the immediate snapshot when the room empties. */
-  protected lastClientLeft(): void {
+  /** Debounce the snapshot after each write, capped by the oldest unsaved edit. */
+  private afterWrite(): void {
+    this.writes += 1;
+    const dirtySince = this.storage.dirtySince() ?? Date.now();
+    const due = Math.min(Date.now() + SNAPSHOT_DEBOUNCE_MS, dirtySince + SNAPSHOT_MAX_WAIT_MS);
+    void this.ctx.storage.setAlarm(due);
+  }
+
+  /** Everyone left: store what is pending and snapshot right away. */
+  private lastClientLeft(): void {
+    if (this.deleted || !this.doc) return;
     this.flush();
+    if (this.storage.dirtySince() !== null) void this.ctx.storage.setAlarm(Date.now());
+  }
+
+  /**
+   * Copy the live document and its title into Postgres.
+   *
+   * Throwing makes the runtime retry the alarm with backoff. If the row is
+   * gone, the document was deleted in Postgres, so the room deletes itself.
+   */
+  async alarm(): Promise<void> {
+    const doc = this.doc;
+    const documentId = this.storage.documentId();
+    if (this.deleted || !doc || !documentId) return;
+    this.flush();
+    if (this.storage.dirtySince() === null) return;
+
+    const writesBefore = this.writes;
+    const state = Y.encodeStateAsUpdate(doc);
+    const title = titleForColumn(doc.getText(TITLE_FIELD).toString());
+    const exists = await this.store.save(documentId, { state, title });
+    if (!exists) {
+      await this.deleteRoom();
+      return;
+    }
+
+    if (this.writes === writesBefore) {
+      // Nothing changed while saving: Postgres matches. Compact the local log too.
+      this.storage.clearDirty();
+      this.storage.writeSnapshot(state);
+    } else {
+      // Edits arrived during the save; snapshot again soon.
+      await this.ctx.storage.setAlarm(Date.now() + SNAPSHOT_DEBOUNCE_MS);
+    }
+  }
+
+  /** Close every socket for good and erase this room's storage and alarm. */
+  protected async deleteRoom(): Promise<void> {
+    this.deleted = true;
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    this.pendingUpdates = [];
+    this.pendingAcks.clear();
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(CLOSE_DELETED, "Document deleted");
+      } catch {
+        // Already closed.
+      }
+    }
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.doc = null;
   }
 
   // Presence

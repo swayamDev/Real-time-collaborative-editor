@@ -50,3 +50,4 @@ next-env.d.ts
 # wrangler
 .wrangler/
 .dev.vars
+.wrangler-local/

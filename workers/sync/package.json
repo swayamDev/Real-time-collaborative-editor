@@ -14,11 +14,13 @@
   "dependencies": {
     "@brahma/protocol": "workspace:*",
     "lib0": "0.2.120",
+    "pg": "8.23.1",
     "y-protocols": "1.0.7",
     "yjs": "13.6.33"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.11",
+    "@types/pg": "8.23.1",
     "typescript": "5.9.3",
     "vitest": "5.1.0",
     "wrangler": "4.156.0"
