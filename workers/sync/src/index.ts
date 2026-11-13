@@ -1,4 +1,5 @@
 import { isDocumentId } from "@brahma/protocol";
+import { bearerToken, secretMatches } from "./secret";
 
 export { DocumentRoom } from "./room";
 
@@ -29,6 +30,20 @@ export default {
       if (!isDocumentId(socket[1])) return new Response("Invalid document id", { status: 400 });
       if (!originAllowed(request, env)) return new Response("Origin not allowed", { status: 403 });
       return roomFor(env, socket[1]).fetch(request);
+    }
+
+    // Called by the Next app for rename and delete from the sidebar.
+    const internal = /^\/internal\/documents\/([^/]+)(\/title)?$/.exec(url.pathname);
+    if (internal) {
+      if (!(await secretMatches(bearerToken(request), env.SYNC_INTERNAL_SECRET))) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      if (!isDocumentId(internal[1])) return new Response("Invalid document id", { status: 400 });
+      const isTitle = internal[2] === "/title";
+      if ((isTitle && request.method !== "POST") || (!isTitle && request.method !== "DELETE")) {
+        return new Response("Method not allowed", { status: 405 });
+      }
+      return roomFor(env, internal[1]).fetch(request);
     }
 
     return new Response("Not found", { status: 404 });

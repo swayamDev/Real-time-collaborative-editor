@@ -76,7 +76,10 @@ export class DocumentRoom extends DurableObject<Env> {
   // Connections
 
   async fetch(request: Request): Promise<Response> {
-    const documentId = new URL(request.url).pathname.split("/")[2]?.toLowerCase() ?? "";
+    const path = new URL(request.url).pathname;
+    if (path.startsWith("/internal/")) return this.internal(request, path.split("/")[3].toLowerCase());
+
+    const documentId = path.split("/")[2]?.toLowerCase() ?? "";
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
 
@@ -179,6 +182,38 @@ export class DocumentRoom extends DurableObject<Env> {
   async webSocketError(ws: WebSocket): Promise<void> {
     this.removeSocket(ws);
     if (this.openSockets().length === 0) this.lastClientLeft();
+  }
+
+  // Internal API (rename and delete from the Next app)
+
+  private async internal(request: Request, documentId: string): Promise<Response> {
+    if (request.method === "DELETE") {
+      await this.deleteRoom();
+      return new Response(null, { status: 204 });
+    }
+
+    let title: unknown;
+    try {
+      title = ((await request.json()) as { title?: unknown }).title;
+    } catch {
+      return Response.json({ error: "Body must be JSON." }, { status: 400 });
+    }
+    if (typeof title !== "string") return Response.json({ error: "Title must be text." }, { status: 400 });
+
+    const result = await this.ensureLoaded(documentId);
+    if (result !== "ok") return Response.json({ error: "Document not found." }, { status: 404 });
+
+    const cleaned = titleForColumn(title);
+    const text = this.doc!.getText(TITLE_FIELD);
+    // Replace the shared title; open editors receive it as a normal update.
+    this.doc!.transact(() => {
+      text.delete(0, text.length);
+      text.insert(0, cleaned);
+    }, "internal");
+    this.flush();
+    // The sidebar list reads the column, so snapshot right away.
+    await this.ctx.storage.setAlarm(Date.now());
+    return Response.json({ title: cleaned });
   }
 
   // Loading

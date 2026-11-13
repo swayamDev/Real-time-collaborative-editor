@@ -315,3 +315,63 @@ describe("snapshots to Postgres", () => {
     expect(await alarmAt(id)).toBeNull();
   });
 });
+
+describe("internal API", () => {
+  function internal(path: string, init: RequestInit & { secret?: string } = {}) {
+    const { secret = "test-secret", ...rest } = init;
+    return SELF.fetch(`http://sync.test/internal/documents/${path}`, {
+      ...rest,
+      headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+    });
+  }
+
+  it("rejects a wrong or missing secret", async () => {
+    const id = seed();
+    expect((await internal(id, { method: "DELETE", secret: "wrong" })).status).toBe(401);
+    expect((await internal(id, { method: "DELETE", secret: "" })).status).toBe(401);
+    expect((await internal(id, { method: "DELETE", secret: "test-secret-but-longer" })).status).toBe(401);
+  });
+
+  it("renames through the shared title so open editors update, then snapshots", async () => {
+    const id = seed("Before");
+    const a = await joined(id);
+    const response = await internal(`${id}/title`, { method: "POST", body: JSON.stringify({ title: "  After\nrename " }) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ title: "After rename" });
+    await a.until(() => a.text("title") === "After rename", "title update reaches the editor");
+
+    const deadline = Date.now() + 1_500;
+    while (memoryStore.rows.get(id)!.title !== "After rename") {
+      if (Date.now() > deadline) throw new Error("Column not updated");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  });
+
+  it("returns 404 when renaming a document that does not exist", async () => {
+    const response = await internal(`${newDocumentId()}/title`, { method: "POST", body: JSON.stringify({ title: "x" }) });
+    expect(response.status).toBe(404);
+  });
+
+  it("deletes: closes sockets with 4410, removes the alarm and all storage", async () => {
+    const id = seed();
+    const a = await joined(id);
+    a.edit((doc) => doc.getText("body").insert(0, "pending snapshot"));
+    await a.until(() => a.last("ack")!.count >= 2, "stored");
+
+    expect((await internal(id, { method: "DELETE" })).status).toBe(204);
+    await a.until(() => a.closed !== null, "closed");
+    expect(a.closed?.code).toBe(4410);
+
+    await runInDurableObject(stubFor(id), async (_instance, state) => {
+      expect(await state.storage.getAlarm()).toBeNull();
+      const tables = state.storage.sql
+        .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '_cf_%'")
+        .toArray();
+      expect(tables).toEqual([]);
+    });
+
+    const again = await TestClient.connect(id);
+    await again.until(() => again.closed !== null, "rejected");
+    expect(again.closed?.code).toBe(4410);
+  });
+});

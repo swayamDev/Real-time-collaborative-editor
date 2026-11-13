@@ -4,6 +4,7 @@ import { PanelLeftClose, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { deleteDocumentAction } from "@/app/actions";
+import { DELETE_FAILED } from "@/lib/copy";
 import { displayTitle } from "@/lib/title";
 import type { DocumentSummary } from "@/server/documents";
 import { useDocuments, useShell } from "./app-shell";
@@ -40,7 +41,7 @@ export function Sidebar({ variant }: { variant: "docked" | "drawer" }) {
           return;
         }
       } catch {
-        setDeleteError("Couldn't delete. Check your connection and try again.");
+        setDeleteError(DELETE_FAILED);
         return;
       }
       remove(id);

@@ -49,19 +49,18 @@ export async function createDocument(): Promise<DocumentSummary> {
   return toSummary(row);
 }
 
-/** Renaming counts as an edit, so it moves the document to the top of the list. */
-export async function renameDocument(id: string, title: string): Promise<DocumentSummary | null> {
-  const [row] = await db()
-    .update(documents)
-    .set({ title, updatedAt: sql`now()` })
-    .where(eq(documents.id, id))
-    .returning(summaryColumns);
-  return row ? toSummary(row) : null;
-}
-
-export async function deleteDocument(id: string): Promise<boolean> {
-  const rows = await db().delete(documents).where(eq(documents.id, id)).returning({ id: documents.id });
-  return rows.length > 0;
+/**
+ * Delete the row, but only commit if `beforeCommit` succeeds. The delete
+ * holds the row while the sync server erases its live copy; if that call
+ * fails, the transaction rolls back and nothing changes.
+ */
+export async function deleteDocument(id: string, beforeCommit: () => Promise<void>): Promise<boolean> {
+  return db().transaction(async (tx) => {
+    const rows = await tx.delete(documents).where(eq(documents.id, id)).returning({ id: documents.id });
+    if (rows.length === 0) return false;
+    await beforeCommit();
+    return true;
+  });
 }
 
 /**

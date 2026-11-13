@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { renameDocumentAction } from "@/app/actions";
 import { cn } from "@/lib/cn";
+import { RENAME_FAILED } from "@/lib/copy";
 import { TITLE_MAX_LENGTH, displayTitle } from "@/lib/title";
 import type { DocumentSummary } from "@/server/documents";
 import { useDocuments } from "./app-shell";
@@ -43,7 +44,7 @@ export function DocumentRow({ document, active, onRequestDelete }: DocumentRowPr
       touch(document.id, result.value.updatedAt);
     } catch {
       setTitle(document.id, previous);
-      setError("Couldn't rename. Check your connection and try again.");
+      setError(RENAME_FAILED);
     }
   };
 

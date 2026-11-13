@@ -1,6 +1,6 @@
 import { isDocumentId } from "@/lib/ids";
 import { validateTitle } from "@/lib/title";
-import { renameDocument } from "@/server/documents";
+import { renameInSync } from "@/server/sync";
 
 /** Rename from the editor's title field. Accepts JSON: { "title": string }. */
 export async function PATCH(request: Request, ctx: RouteContext<"/api/documents/[id]">) {
@@ -21,9 +21,10 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/documents/
     return Response.json({ error: result.error }, { status: 400 });
   }
 
-  const document = await renameDocument(id, result.title);
-  if (!document) {
-    return Response.json({ error: "Document not found." }, { status: 404 });
+  try {
+    const title = await renameInSync(id, result.title);
+    return Response.json({ id, title, updatedAt: new Date().toISOString() });
+  } catch {
+    return Response.json({ error: "Couldn't rename. Try again." }, { status: 502 });
   }
-  return Response.json(document);
 }
