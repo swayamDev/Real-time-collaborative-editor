@@ -1,17 +1,9 @@
-import type { SyncStatus as Status } from "@/lib/collab/provider";
 import { cn } from "@/lib/cn";
+import { STATUS_LABELS, type SyncStatus as Status } from "@/lib/collab/status";
 
-/** One label for connection and save state. See SyncProvider for when each shows. */
-const LABELS: Partial<Record<Status, string>> = {
-  connecting: "Connecting",
-  saved: "Saved",
-  saving: "Saving",
-  reconnecting: "Reconnecting",
-  offline: "Offline",
-};
-
+/** One label for connection, device and server state. See computeStatus for the rules. */
 export function SyncStatus({ status, pending = false }: { status: Status; pending?: boolean }) {
-  const label = LABELS[status];
+  const attention = status === "reconnecting" || status === "reconnecting-local" || status === "saved-on-device";
   return (
     <div
       role="status"
@@ -19,12 +11,9 @@ export function SyncStatus({ status, pending = false }: { status: Status; pendin
       data-testid="sync-status"
       data-status={status}
       data-pending={pending}
-      className={cn(
-        "px-2 text-ui-sm whitespace-nowrap",
-        status === "reconnecting" || status === "offline" ? "text-ink" : "text-ink-muted",
-      )}
+      className={cn("px-2 text-ui-sm whitespace-nowrap", attention ? "text-ink" : "text-ink-muted")}
     >
-      {label}
+      {STATUS_LABELS[status]}
     </div>
   );
 }

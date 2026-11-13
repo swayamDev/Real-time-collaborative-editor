@@ -4,8 +4,6 @@ import { Selection } from "@tiptap/pm/state";
 import { type Editor, EditorContent, useEditor } from "@tiptap/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type * as Y from "yjs";
-import { base64ToBytes } from "@/lib/base64";
-import { loadDoc } from "@/lib/collab/yjs";
 import { TOO_LARGE_TO_ADD } from "@/lib/copy";
 import { displayTitle } from "@/lib/title";
 import { useDocuments } from "../app-shell";
@@ -17,7 +15,8 @@ import { PresenceBar } from "./presence-bar";
 import { buildExtensions } from "./extensions";
 import { SharedTitleField } from "./shared-title-field";
 import { SyncStatus } from "./sync-status";
-import { type SyncSession, useSyncSession, useSyncStatus, useUnconfirmedChanges } from "./use-sync-session";
+import { TitleSkeleton } from "./title-skeleton";
+import { type SyncSession, usePendingEdits, useSyncSession, useSyncStatus } from "./use-sync-session";
 
 /**
  * Move the caret to the start of the body synchronously. TipTap's focus
@@ -72,16 +71,18 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }
     ensure({ id, title: initialTitle, updatedAt: initialUpdatedAt });
   }, [ensure, id, initialTitle, initialUpdatedAt]);
 
-  // The Y.Doc starts from the Postgres snapshot; the sync server fills in
-  // anything newer. Merging the same updates twice is harmless.
-  const [ydoc] = useState(() => loadDoc(base64ToBytes(initialState)));
-  const session = useSyncSession(id, ydoc);
+  // The Y.Doc opens from this device first, then the page's Postgres
+  // snapshot, then whatever the sync server sends. Merging is idempotent.
+  const session = useSyncSession(id, initialState);
   const status = useSyncStatus(session);
-  const pending = useUnconfirmedChanges(session);
+  const pending = usePendingEdits(session);
 
-  // Synced at least once: the shared title is authoritative from then on.
-  const [synced, setSynced] = useState(false);
-  if (!synced && (status === "saved" || status === "saving")) setSynced(true);
+  // The shared title is authoritative once this device has synced the
+  // document, now or on an earlier visit. Before that, a Phase 1 title only
+  // exists in the Postgres column, so the field stays read-only.
+  const [syncedThisTab, setSyncedThisTab] = useState(false);
+  if (!syncedThisTab && (status === "saved" || status === "syncing" || status === "saving")) setSyncedThisTab(true);
+  const synced = syncedThisTab || (session?.local.everSynced ?? false);
 
   const [title, setLocalTitle] = useState(initialTitle);
   const onTitleChange = useCallback(
@@ -138,9 +139,10 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }
       />
       <main id="main" className="flex-1 overflow-y-auto" data-testid="document-scroll">
         <article className="doc-column pt-14 sm:pt-24">
+          {session ? (
           <SharedTitleField
             ref={titleRef}
-            doc={ydoc}
+            doc={session.local.doc}
             fallbackTitle={initialTitle}
             synced={synced}
             autoFocus={initialTitle === ""}
@@ -149,9 +151,12 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }
               if (editorRef.current) focusBodyStart(editorRef.current);
             }}
           />
+          ) : (
+            <TitleSkeleton title={initialTitle} />
+          )}
           {session ? (
             <CollaborativeBody
-              doc={ydoc}
+              doc={session.local.doc}
               session={session}
               editorRef={editorRef}
               titleRef={titleRef}

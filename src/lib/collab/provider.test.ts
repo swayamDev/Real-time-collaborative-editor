@@ -1,67 +1,164 @@
 import {
+  BATCH_TARGET_BYTES,
+  CLOSE_TOO_LARGE,
   type Message,
   decodeMessage,
   encodeAck,
   encodeAwareness,
-  encodeQueryAwareness,
   encodeSyncStep1,
   encodeSyncStep2,
-  encodeUpdate,
 } from "@brahma/protocol";
+import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Awareness, encodeAwarenessUpdate } from "y-protocols/awareness";
 import * as Y from "yjs";
-import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, type ProviderEnvironment, SAVING_AFTER_MS, SyncProvider } from "./provider";
+import { LocalDocument, TAB_ORIGIN } from "./local-document";
+import { LocalStore } from "./local-store";
+import {
+  BACKOFF_MAX_MS,
+  type LockManagerLike,
+  type ProviderEnvironment,
+  SyncProvider,
+  clientsMissingOnServer,
+  packEntries,
+} from "./provider";
 
 const OPEN = 1;
 const CLOSED = 3;
 
-/** A WebSocket stand-in the test drives by hand. */
+/** Stands in for the Durable Object: same replies, acks and limits. */
+class FakeServer {
+  readonly doc = new Y.Doc();
+  /** Every document message received, decoded. */
+  readonly received: Uint8Array[] = [];
+  rejectIf: (update: Uint8Array) => boolean = () => false;
+
+  handle(socket: FakeSocket, message: Message): void {
+    switch (message.type) {
+      case "sync-step-1":
+        socket.deliver(encodeSyncStep2(this.doc, message.stateVector));
+        socket.deliver(encodeSyncStep1(this.doc));
+        return;
+      case "sync-step-2":
+      case "update":
+        if (this.rejectIf(message.update)) {
+          socket.serverClose(CLOSE_TOO_LARGE);
+          return;
+        }
+        this.received.push(message.update);
+        Y.applyUpdate(this.doc, message.update);
+        socket.acks += 1;
+        socket.deliver(encodeAck(socket.acks));
+        return;
+      default:
+        return;
+    }
+  }
+
+  text(): string {
+    return this.doc.getText("body").toString();
+  }
+}
+
 class FakeSocket {
   readyState = 0;
   binaryType = "blob";
-  sent: Message[] = [];
+  acks = 0;
+  readonly sent: Message[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: ArrayBuffer }) => void) | null = null;
   onclose: ((event: { code: number }) => void) | null = null;
   onerror: (() => void) | null = null;
 
-  constructor(readonly url: string) {}
+  constructor(private readonly server: FakeServer) {
+    queueMicrotask(() => {
+      if (this.readyState !== 0) return;
+      this.readyState = OPEN;
+      this.onopen?.();
+      // The server's own Step 1 on connect.
+      this.deliver(encodeSyncStep1(this.server.doc));
+    });
+  }
 
   send(data: Uint8Array): void {
-    this.sent.push(decodeMessage(data));
+    const message = decodeMessage(data);
+    this.sent.push(message);
+    queueMicrotask(() => {
+      if (this.readyState === OPEN) this.server.handle(this, message);
+    });
+  }
+
+  deliver(data: Uint8Array): void {
+    queueMicrotask(() => {
+      if (this.readyState === OPEN) this.onmessage?.({ data: data.slice().buffer as ArrayBuffer });
+    });
   }
 
   close(): void {
     this.readyState = CLOSED;
   }
 
-  open(): void {
-    this.readyState = OPEN;
-    this.onopen?.();
-  }
-
-  receive(data: Uint8Array): void {
-    this.onmessage?.({ data: data.slice().buffer as ArrayBuffer });
-  }
-
-  drop(code = 1006): void {
+  serverClose(code: number): void {
+    if (this.readyState === CLOSED) return;
     this.readyState = CLOSED;
-    this.onclose?.({ code });
-  }
-
-  sentOf<T extends Message["type"]>(type: T): Array<Extract<Message, { type: T }>> {
-    return this.sent.filter((message) => message.type === type) as Array<Extract<Message, { type: T }>>;
+    queueMicrotask(() => this.onclose?.({ code }));
   }
 }
 
-function setup(options: { online?: boolean } = {}) {
+/** A Web Locks stand-in: one holder per name, others wait their turn. */
+function fakeLocks(): LockManagerLike & { grants: string[] } {
+  const queues = new Map<string, Promise<unknown>>();
+  const grants: string[] = [];
+  return {
+    grants,
+    request<T>(name: string, callback: () => Promise<T>): Promise<T> {
+      const previous = queues.get(name) ?? Promise.resolve();
+      const run = previous.catch(() => {}).then(() => {
+        grants.push(name);
+        return callback();
+      });
+      queues.set(name, run);
+      return run;
+    },
+  };
+}
+
+const realSetImmediate = globalThis.setImmediate;
+
+/** Let IndexedDB (real event loop) and fake timers both move forward. */
+async function tick(ms = 10): Promise<void> {
+  await vi.advanceTimersByTimeAsync(ms);
+  await new Promise((resolve) => realSetImmediate(resolve));
+}
+
+async function until(predicate: () => boolean | Promise<boolean>, label: string, steps = 400): Promise<void> {
+  for (let i = 0; i < steps; i++) {
+    if (await predicate()) return;
+    await tick();
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+interface Tab {
+  local: LocalDocument;
+  provider: SyncProvider;
+  sockets: FakeSocket[];
+  setOnline: (online: boolean) => void;
+}
+
+let factory: IDBFactory;
+let store: LocalStore;
+let server: FakeServer;
+let online: boolean;
+let locks: ReturnType<typeof fakeLocks>;
+const connectivity = new Set<() => void>();
+const tabs: Tab[] = [];
+
+async function openTab(docId = "doc"): Promise<Tab> {
   const sockets: FakeSocket[] = [];
-  let online = options.online ?? true;
-  const connectivity = new Set<() => void>();
   const environment: ProviderEnvironment = {
-    createSocket: (url) => {
-      const socket = new FakeSocket(url);
+    createSocket: () => {
+      const socket = new FakeSocket(server);
       sockets.push(socket);
       return socket as unknown as WebSocket;
     },
@@ -71,216 +168,217 @@ function setup(options: { online?: boolean } = {}) {
       return () => connectivity.delete(listener);
     },
     random: () => 1,
+    locks,
   };
-  const doc = new Y.Doc();
-  const awareness = new Awareness(doc);
-  const server = new Y.Doc();
-  const provider = new SyncProvider({ url: "ws://sync.test/documents/x", doc, awareness, environment });
-
-  const socket = () => sockets.at(-1)!;
-  /** Complete the handshake the way the server does. */
-  const handshake = () => {
-    socket().open();
-    socket().receive(encodeSyncStep1(server));
-    const clientStep1 = socket().sentOf("sync-step-1").at(-1)!;
-    socket().receive(encodeSyncStep2(server, clientStep1.stateVector));
+  const local = await LocalDocument.open(store, docId, new Uint8Array());
+  const awareness = new Awareness(local.doc);
+  const provider = new SyncProvider({ url: "ws://sync.test/documents/doc", local, awareness, environment });
+  const tab = {
+    local,
+    provider,
+    sockets,
+    setOnline: (value: boolean) => {
+      online = value;
+      connectivity.forEach((listener) => listener());
+    },
   };
-  const setOnline = (value: boolean) => {
-    online = value;
-    connectivity.forEach((listener) => listener());
-  };
-
-  return { doc, awareness, server, provider, sockets, socket, handshake, setOnline };
+  tabs.push(tab);
+  return tab;
 }
 
-beforeEach(() => {
-  vi.useFakeTimers();
+function type(local: LocalDocument, text: string): void {
+  local.doc.getText("body").insert(local.doc.getText("body").length, text);
+}
+
+async function pendingCount(): Promise<number> {
+  return (await store.listPending("doc")).length;
+}
+
+beforeEach(async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
   vi.stubGlobal("WebSocket", { OPEN, CLOSED });
+  factory = new IDBFactory();
+  store = await LocalStore.open(factory);
+  server = new FakeServer();
+  online = true;
+  locks = fakeLocks();
+  connectivity.clear();
 });
+
 afterEach(() => {
+  for (const tab of tabs.splice(0)) {
+    tab.provider.destroy();
+    tab.local.destroy();
+  }
+  store.close();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
-describe("SyncProvider", () => {
-  it("connects, sends Step 1 first, and is Saved after the handshake", () => {
-    const { provider, socket, handshake } = setup();
-    expect(provider.getStatus()).toBe("connecting");
-    handshake();
-    expect(socket().sent[0].type).toBe("sync-step-1");
-    expect(provider.getStatus()).toBe("saved");
-    expect(socket().binaryType).toBe("arraybuffer");
+describe("connecting and live edits", () => {
+  it("goes from Connecting to Saved after the handshake and an empty flush", async () => {
+    const tab = await openTab();
+    expect(tab.provider.getStatus()).toBe("connecting");
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    expect(tab.sockets[0].sent[0].type).toBe("sync-step-1");
   });
 
-  it("answers the server's Step 1 with its own Step 2", () => {
-    const { doc, socket, handshake } = setup();
-    doc.getText("body").insert(0, "made before connecting");
-    handshake();
-    const step2 = socket().sentOf("sync-step-2")[0];
-    const check = new Y.Doc();
-    Y.applyUpdate(check, step2.update);
-    expect(check.getText("body").toString()).toBe("made before connecting");
+  it("sends live edits, and acknowledgements clear them from the device queue", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    type(tab.local, "hello");
+    await until(() => server.text() === "hello", "server has the edit");
+    await until(async () => (await pendingCount()) === 0, "queue cleared");
+    expect(tab.provider.hasUnsavedChanges).toBe(false);
+    await until(() => !tab.provider.hasPendingEdits, "nothing pending");
+  });
+});
+
+describe("offline", () => {
+  it("keeps edits on the device while offline and syncs them when back", async () => {
+    online = false;
+    const tab = await openTab();
+    type(tab.local, "written offline");
+    await until(async () => (await pendingCount()) === 1, "stored on device");
+    expect(tab.provider.getStatus()).toBe("saved-on-device");
+    expect(tab.provider.hasUnsavedChanges).toBe(false);
+
+    tab.setOnline(true);
+    await until(() => server.text() === "written offline", "flushed");
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    expect(await pendingCount()).toBe(0);
   });
 
-  it("sends local edits and shows Saving only when an ack is late", () => {
-    const { doc, provider, socket, handshake } = setup();
-    handshake();
-    socket().receive(encodeAck(1)); // the handshake Step 2
-    const acked = vi.fn();
-    provider.onAllAcked(acked);
-    socket().receive(encodeAck(1));
-    expect(acked).not.toHaveBeenCalled(); // the handshake alone is not an edit
+  it("splits more than 1 MiB of offline edits into messages under the batch size", async () => {
+    online = false;
+    const tab = await openTab();
+    const chunk = "x".repeat(200_000);
+    for (let i = 0; i < 7; i++) type(tab.local, chunk);
+    await until(async () => (await pendingCount()) === 7, "stored on device");
 
-    doc.getText("body").insert(0, "hi");
-    expect(socket().sentOf("update")).toHaveLength(1);
-    expect(provider.hasUnconfirmedChanges).toBe(true);
-    expect(provider.getStatus()).toBe("saved");
-
-    vi.advanceTimersByTime(SAVING_AFTER_MS);
-    expect(provider.getStatus()).toBe("saving");
-
-    socket().receive(encodeAck(2));
-    expect(provider.getStatus()).toBe("saved");
-    expect(provider.hasUnconfirmedChanges).toBe(false);
-    expect(acked).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not show Saving when the ack arrives within a second", () => {
-    const { doc, provider, socket, handshake } = setup();
-    handshake();
-    socket().receive(encodeAck(1));
-    doc.getText("body").insert(0, "quick");
-    vi.advanceTimersByTime(150);
-    socket().receive(encodeAck(2));
-    vi.advanceTimersByTime(SAVING_AFTER_MS * 2);
-    expect(provider.getStatus()).toBe("saved");
-  });
-
-  it("applies remote updates with itself as origin and does not echo them", () => {
-    const { doc, provider, server, socket, handshake } = setup();
-    handshake();
-    const origins: unknown[] = [];
-    doc.on("update", (_update, origin) => origins.push(origin));
-    const before = Y.encodeStateVector(server);
-    server.getText("body").insert(0, "from a peer");
-    socket().receive(encodeUpdate(Y.encodeStateAsUpdate(server, before)));
-
-    expect(doc.getText("body").toString()).toBe("from a peer");
-    expect(origins).toEqual([provider]);
-    expect(socket().sentOf("update")).toHaveLength(0);
-  });
-
-  it("reconnects with growing, capped backoff and shows Reconnecting", () => {
-    const { provider, sockets, socket, handshake } = setup();
-    handshake();
-    const delays: number[] = [];
-    for (let attempt = 0; attempt < 7; attempt++) {
-      const count = sockets.length;
-      socket().drop();
-      expect(provider.getStatus()).toBe("reconnecting");
-      let waited = 0;
-      while (sockets.length === count) {
-        vi.advanceTimersByTime(100);
-        waited += 100;
-      }
-      delays.push(waited);
+    tab.setOnline(true);
+    await until(() => server.text().length === 1_400_000, "all edits on server", 800);
+    const updates = tab.sockets.at(-1)!.sent.filter((message) => message.type === "update");
+    expect(updates.length).toBeGreaterThan(1);
+    for (const message of updates) {
+      if (message.type === "update") expect(message.update.byteLength).toBeLessThanOrEqual(BATCH_TARGET_BYTES + 1024);
     }
-    // random() is 1, so each delay is the full ceiling.
-    expect(delays.slice(0, 5)).toEqual([500, 1000, 2000, 4000, 8000]);
-    expect(Math.max(...delays)).toBe(BACKOFF_MAX_MS);
-    expect(BACKOFF_BASE_MS).toBe(500);
   });
 
-  it("keeps offline edits, delivers them on reconnect, and warns until acked", () => {
-    const { doc, provider, server, socket, handshake } = setup();
-    handshake();
-    socket().receive(encodeAck(1));
-    socket().drop();
-    doc.getText("body").insert(0, "written while disconnected");
-    expect(provider.hasUnconfirmedChanges).toBe(true);
+  it("says Reconnecting. Saved on this device. when the socket drops but edits are written", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.sockets.at(-1)!.serverClose(1006);
+    await until(() => tab.provider.getStatus() === "reconnecting-local", "reconnecting, saved locally");
+  });
+});
 
-    vi.advanceTimersByTime(BACKOFF_BASE_MS);
-    handshake();
-    const step2 = socket().sentOf("sync-step-2").at(-1)!;
-    Y.applyUpdate(server, step2.update);
-    expect(server.getText("body").toString()).toBe("written while disconnected");
-    expect(provider.hasUnconfirmedChanges).toBe(true);
+describe("rejected edits", () => {
+  it("halts instead of skipping an edit the server rejects even on its own", async () => {
+    online = false;
+    const tab = await openTab();
+    type(tab.local, "first ");
+    await until(async () => (await pendingCount()) === 1, "first stored");
+    type(tab.local, "BAD ");
+    await until(async () => (await pendingCount()) === 2, "second stored");
+    type(tab.local, "third");
+    await until(async () => (await pendingCount()) === 3, "third stored");
 
-    socket().receive(encodeAck(1));
-    expect(provider.hasUnconfirmedChanges).toBe(false);
-    expect(provider.getStatus()).toBe("saved");
+    const badText = new TextEncoder().encode("BAD");
+    const contains = (haystack: Uint8Array, needle: Uint8Array) =>
+      haystack.some((_, i) => needle.every((byte, j) => haystack[i + j] === byte));
+    server.rejectIf = (update) => contains(update, badText);
+
+    tab.setOnline(true);
+    await until(() => tab.provider.getStatus() === "halted", "halted", 2_000);
+
+    // The first edit went through; the rejected one and everything after it
+    // stayed on the device, and nothing after it was ever sent.
+    expect(server.text()).toBe("first ");
+    expect(await pendingCount()).toBe(2);
+    expect((await store.getMeta("doc"))?.halted).toBe(true);
+    const socketsAtHalt = tab.sockets.length;
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets.length).toBe(socketsAtHalt);
+  });
+});
+
+describe("convergence", () => {
+  it("sends what the server lacks even when the queue does not cover it", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.sockets.at(-1)!.serverClose(1006);
+    await until(() => tab.provider.getStatus() !== "saved", "disconnected");
+
+    // An edit that never entered this tab's queue (as if a row were lost).
+    tab.local.doc.transact(() => tab.local.doc.getText("body").insert(0, "not in the queue"), TAB_ORIGIN);
+    expect(await pendingCount()).toBe(0);
+
+    await tick(1_000);
+    await until(() => server.text() === "not in the queue", "converged", 800);
+    expect(clientsMissingOnServer(tab.local.doc, Y.encodeStateVector(server.doc))).toEqual([]);
+  });
+});
+
+describe("two tabs", () => {
+  it("only one tab flushes the queue when both reconnect at once", async () => {
+    online = false;
+    const a = await openTab();
+    for (const word of ["one ", "two ", "three"]) type(a.local, word);
+    await until(async () => (await pendingCount()) === 3, "stored");
+    const b = await openTab();
+
+    a.setOnline(true); // both tabs see the network return together
+    await until(() => server.text() === "one two three", "flushed", 800);
+    await until(
+      () => a.provider.getStatus() === "saved" && b.provider.getStatus() === "saved",
+      "both saved",
+      800,
+    );
+
+    // The queued edits reached the server exactly once.
+    const withQueue = server.received.filter((update) => {
+      const probe = new Y.Doc();
+      Y.applyUpdate(probe, update);
+      return probe.getText("body").toString().length > 0;
+    });
+    expect(withQueue).toHaveLength(1);
+    expect(locks.grants.filter((name) => name === "brahma-flush:doc").length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("other states", () => {
+  it("stops for good when the document is deleted", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.sockets.at(-1)!.serverClose(4410);
+    await until(() => tab.provider.getStatus() === "deleted", "deleted");
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets).toHaveLength(1);
   });
 
-  it("treats an unacked edit at disconnect as unconfirmed", () => {
-    const { doc, provider, socket, handshake } = setup();
-    handshake();
-    socket().receive(encodeAck(1));
-    doc.getText("body").insert(0, "in flight");
-    socket().drop();
-    expect(provider.hasUnconfirmedChanges).toBe(true);
-  });
-
-  it("shows Offline and waits for the network instead of retrying", () => {
-    const { provider, sockets, socket, handshake, setOnline } = setup();
-    handshake();
-    setOnline(false);
-    expect(provider.getStatus()).toBe("offline");
-    socket().drop();
-    const count = sockets.length;
-    vi.advanceTimersByTime(60_000);
-    expect(sockets.length).toBe(count);
-    expect(provider.getStatus()).toBe("offline");
-
-    setOnline(true);
-    expect(sockets.length).toBe(count + 1);
-    expect(provider.getStatus()).toBe("reconnecting");
-  });
-
-  it("stops for good when the document is deleted or missing", () => {
-    const deleted = setup();
-    deleted.handshake();
-    deleted.socket().drop(4410);
-    expect(deleted.provider.getStatus()).toBe("deleted");
-    vi.advanceTimersByTime(60_000);
-    expect(deleted.sockets).toHaveLength(1);
-
-    const missing = setup();
-    missing.socket().open();
-    missing.socket().drop(4404);
-    expect(missing.provider.getStatus()).toBe("not-found");
-  });
-
-  it("sends presence on connect, on change, and when the server asks", () => {
-    const { awareness, socket, handshake } = setup();
+  it("sends presence on connect and clears peers when the connection drops", async () => {
+    const tab = await openTab();
+    const awareness = (tab.provider as unknown as { options: { awareness: Awareness } }).options.awareness;
     awareness.setLocalStateField("user", { name: "Ada" });
-    handshake();
-    expect(socket().sentOf("awareness")).toHaveLength(1);
-    awareness.setLocalStateField("user", { name: "Ada L" });
-    expect(socket().sentOf("awareness")).toHaveLength(2);
-    socket().receive(encodeQueryAwareness());
-    expect(socket().sentOf("awareness")).toHaveLength(3);
-  });
-
-  it("applies peer presence and clears it when the connection drops", () => {
-    const { awareness, socket, handshake } = setup();
-    handshake();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
     const peerDoc = new Y.Doc();
     const peer = new Awareness(peerDoc);
     peer.setLocalStateField("user", { name: "Grace" });
-    socket().receive(encodeAwareness(encodeAwarenessUpdate(peer, [peerDoc.clientID])));
-    expect(awareness.getStates().get(peerDoc.clientID)).toEqual({ user: { name: "Grace" } });
-
-    socket().drop();
-    expect(awareness.getStates().has(peerDoc.clientID)).toBe(false);
+    tab.sockets[0].deliver(encodeAwareness(encodeAwarenessUpdate(peer, [peerDoc.clientID])));
+    await until(() => awareness.getStates().has(peerDoc.clientID), "peer present");
+    tab.sockets[0].serverClose(1006);
+    await until(() => !awareness.getStates().has(peerDoc.clientID), "peer cleared");
     peer.destroy();
   });
+});
 
-  it("removes its own presence and closes on destroy", () => {
-    const { awareness, doc, provider, socket, handshake } = setup();
-    awareness.setLocalStateField("user", { name: "Ada" });
-    handshake();
-    provider.destroy();
-    expect(awareness.getStates().has(doc.clientID)).toBe(false);
-    expect(socket().readyState).toBe(CLOSED);
+describe("packEntries", () => {
+  const entry = (bytes: number) => ({ update: new Uint8Array(bytes), seq: bytes, edit: null });
+
+  it("packs oldest first under the target and isolates on request", () => {
+    expect(packEntries([entry(400), entry(400), entry(400)], 1000).map((batch) => batch.length)).toEqual([2, 1]);
+    expect(packEntries([entry(2000), entry(10)], 1000).map((batch) => batch.length)).toEqual([1, 1]);
+    expect(packEntries([entry(1), entry(1), entry(1)], 1000, 1)).toHaveLength(3);
   });
 });

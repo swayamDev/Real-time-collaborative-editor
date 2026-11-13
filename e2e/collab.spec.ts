@@ -151,7 +151,7 @@ test("reloading B mid-session loses nothing", async ({ browser }) => {
 });
 
 test.describe("when the sync server goes down", () => {
-  test("clients show Reconnecting, then recover with no lost edits", async ({ browser }) => {
+  test("clients show Reconnecting with edits saved on the device, then recover with no lost edits", async ({ browser }) => {
     const { a, b, url } = await pair(browser);
     await a.getByTestId("title").press("Enter");
     await a.keyboard.type("Before the outage.");
@@ -160,8 +160,9 @@ test.describe("when the sync server goes down", () => {
     await expectSaved(b);
 
     await stopSyncServer();
-    await expect(a.getByTestId("sync-status")).toHaveText("Reconnecting", { timeout: 15_000 });
-    await expect(b.getByTestId("sync-status")).toHaveText("Reconnecting", { timeout: 15_000 });
+    // Online but the socket is down, and every edit is written on the device.
+    await expect(a.getByTestId("sync-status")).toHaveText("Reconnecting. Saved on this device.", { timeout: 15_000 });
+    await expect(b.getByTestId("sync-status")).toHaveText("Reconnecting. Saved on this device.", { timeout: 15_000 });
 
     // Both keep editing while the server is down.
     await caretAtEnd(a);
