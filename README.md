@@ -1,16 +1,17 @@
 # Brahma
 
-A collaborative document editor, built in phases. This repository is at **Phase 2**: several people edit the same document live, with presence, through a sync server built on Cloudflare Durable Objects. Offline support is Phase 3; accounts and permissions are Phase 4.
+A collaborative document editor, built in phases. This repository is at **Phase 3**: several people edit the same document live, with presence, through a sync server built on Cloudflare Durable Objects, and Brahma keeps working without a network. Accounts and permissions are Phase 4.
 
 ## What it does
 
-- **Documents.** Create, rename and delete documents (delete asks for confirmation). The sidebar lists them by last edit. If the sync server cannot be reached, rename and delete say "Couldn't rename. Try again." or "Couldn't delete. Try again." and change nothing.
+- **Documents.** Create, rename and delete documents (delete asks for confirmation). The sidebar lists them by last edit. Rename needs the sync server ("Couldn't rename. Try again." otherwise); delete works even when it is down (see [Delete](#delete)).
 - **Editor.** A title plus rich text: headings 1 to 3, bold, italic, strikethrough, inline code, code blocks, bulleted, numbered and task lists, quotes, links and horizontal rules. Markdown shortcuts work (`## `, `- `, `[ ] `, `> `, ` ``` `, `**bold**`, and so on).
 - **Floating toolbar.** Appears only when text is selected: block type menu, inline marks and a link field. `Cmd/Ctrl+K` adds a link, `Alt+F10` moves focus into the toolbar, `Esc` returns to the text.
 - **Live collaboration.** Everyone with the link edits the same document at once. Concurrent edits merge without conflicts, including the title.
 - **Presence.** Each person gets a caret and selection in one of six collaborator colors with a name flag, and an avatar in the top bar. There are no accounts yet: you set a display name from your avatar, kept in a cookie.
 - **Undo is yours.** `Cmd/Ctrl+Z` undoes only your own edits, never a collaborator's, in the body and in the title.
-- **One status.** The top bar shows the connection and save state in one word (see [Status](#status)). Leaving the page while an edit is unconfirmed shows the browser's warning.
+- **Works offline.** Documents opened on this device open, and stay editable, without a network. Edits are written to the device first, survive closing the tab or a crash, and merge when the connection returns (see [Offline](#offline)).
+- **One status.** The top bar shows connection, device and server state in a few words (see [Status](#status)). Leaving the page shows the browser's warning only if an edit is neither on the server nor written to the device.
 - **Theme.** A manual light/dark toggle. Light is the default, the system setting is ignored, and the choice is kept in a cookie so the first paint is correct.
 - **Responsive and accessible.** Below 768 px the sidebar becomes a drawer. Everything works from the keyboard, focus is always visible, and motion respects `prefers-reduced-motion`.
 
@@ -36,7 +37,7 @@ Open the same document in two browsers (or a normal and a private window) to see
 | --- | --- |
 | `pnpm dev` | Next development server |
 | `pnpm dev:sync` | Sync server (`wrangler dev` in `workers/sync`) |
-| `pnpm build` / `pnpm start` | Production build and server |
+| `pnpm build` / `pnpm start` | Production build (also generates `public/sw.js`) and server. The service worker only registers in production builds. |
 | `pnpm typecheck` | Route types and `tsc` for the app, Worker types and `tsc` for the sync server |
 | `pnpm lint` | ESLint, plus a check that no file contains an em dash |
 | `pnpm test` | Vitest unit tests (app and protocol package) |
@@ -127,7 +128,7 @@ Every WebSocket message is binary and starts with a varUint type. Framing follow
 | `3` | Query awareness | server to client | After waking from hibernation the server has no presence; it asks clients to resend. |
 | `4` | Ack | server to client | Cumulative count of document messages (Step 2 and Update) from this connection that are now durable. Brahma-specific. |
 
-An invalid document id or a disallowed browser origin is rejected with HTTP 400 or 403 before the upgrade, so no Durable Object is created. Close codes: `4404` document not found, `4410` document deleted, `1007` malformed message, `1009` message over 1 MiB. Only the offending socket closes; the room carries on.
+An invalid document id or a disallowed browser origin is rejected with HTTP 400 or 403 before the upgrade, so no Durable Object is created. Close codes: `4404` document not found, `4410` document deleted, `1007` malformed message, `1009` message over 4 MiB. Only the offending socket closes; the room carries on.
 
 ```mermaid
 sequenceDiagram
@@ -143,8 +144,18 @@ sequenceDiagram
   R-->>C: Awareness (everyone present)
   C->>R: Sync Step 1 (client state vector)
   R-->>C: Sync Step 2 (what the client lacks)
-  C->>R: Sync Step 2 (what the server lacks, e.g. offline edits)
+  R-->>C: Sync Step 1 (server state vector)
   C->>R: Awareness (my name, color, cursor)
+  Note over C: Take the flush lock for this document
+  loop Offline queue, oldest first
+    C->>R: Update (queued edits, under 1 MiB per message)
+    R-->>C: Ack (count)
+  end
+  C->>R: Sync Step 1 (convergence check)
+  R-->>C: Sync Step 2, then Sync Step 1 (server state vector)
+  opt The server still lacks something
+    C->>R: Update (per client, what it lacks)
+  end
   loop Editing
     C->>R: Update
     R-->>C: Update (to every other client)
@@ -157,13 +168,22 @@ sequenceDiagram
 
 ### Status
 
-| Label | When |
-| --- | --- |
-| Connecting | Before the first sync completes. |
-| Saved | Connected, synced, and every local edit acknowledged. Also shown during the brief window between an edit and its ack. |
-| Saving | An ack has been outstanding for more than a second (slow network). |
-| Reconnecting | The connection dropped while the browser is online. The client retries with jittered exponential backoff from 0.5 s up to 10 s, keeping edits in memory. |
-| Offline | The browser reports no network. Retrying waits for it to come back. Edits are kept in memory; durable offline storage is Phase 3. |
+One label, computed by a pure function ([src/lib/collab/status.ts](src/lib/collab/status.ts)). Rules are checked in order; the first that matches wins.
+
+| # | Condition | Label |
+| --- | --- | --- |
+| 1 | The document was deleted or does not exist | The editor is replaced by a message |
+| 2 | The server refused an edit even when sent alone | Banner: "This document couldn't sync. Your edits are kept on this device." |
+| 3 | A local edit has waited more than 1 s to be written on the device (or cannot be: storage full) | Saving |
+| 4 | The browser is offline | Saved on this device |
+| 5 | Online, socket not synced, this tab has never synced | Connecting |
+| 6 | Online, socket down, every local edit written on the device | Reconnecting. Saved on this device. |
+| 7 | Online, socket down, a write to the device still in progress | Reconnecting |
+| 8 | Connected, sending the offline queue or verifying convergence | Syncing |
+| 9 | Connected, an ack is more than 1 s late | Saving |
+| 10 | Connected and everything acknowledged | Saved |
+
+Typical transitions: from Saved, the network drops and the label becomes Saved on this device; when it returns, Reconnecting. Saved on this device.; once the handshake is done with edits queued, Syncing; when the last queued edit is acknowledged and convergence is verified, Saved. A live edit whose ack is more than a second late goes from Saved to Saving and back. `navigator.onLine` can be true without internet, which is why rule 6 says the edits are safe while the label says Reconnecting. Reconnects use jittered exponential backoff from 0.5 s to 10 s.
 
 ## Snapshots and persistence
 
@@ -181,7 +201,12 @@ The title in the column is cleaned the same way Phase 1 validated it. If the wri
 
 **Connecting to Neon from the Worker.** The Worker uses `pg` with the `nodejs_compat` flag. `pg` detects the Workers runtime and opens a raw TCP socket through `cloudflare:sockets`. Each load or snapshot opens a short connection, runs one statement and closes it, which suits the low rate (one snapshot every few seconds per active document). In production `DATABASE_URL` should be Neon's pooled string, so many rooms share few Postgres connections. Hyperdrive would cut connection latency and is a drop-in later.
 
-**Delete.** The server action deletes the row inside a transaction and asks the Durable Object to delete itself (close every socket with `4410`, `deleteAlarm()`, `deleteAll()`). The transaction commits only if that call succeeds.
+<a id="delete"></a>**Delete.** Deleting happens in an order where any failure leaves a consistent state:
+
+1. Write a tombstone (`deleted_at`) on the row. From that commit the document is deleted for the list, the page, the sync server and clients returning from offline.
+2. Ask the Durable Object to close every socket with `4410` and erase itself (`deleteAlarm()`, `deleteAll()`). This is best effort: a room that loads a tombstoned row, a room that sees the tombstone on its first connection, and a snapshot that finds no live row all erase the room.
+
+So delete works even while the sync server is down, and a document is never half deleted or unreachable. Tombstones are kept until accounts bring a purge policy, so a device returning from months offline still learns what happened.
 
 **Durable Object limits.** On the Workers Free plan, SQLite-backed Durable Objects allow 100,000 rows written per day across the account, and every `setAlarm()` and delete counts as a row written ([pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/), [limits](https://developers.cloudflare.com/durable-objects/platform/limits/)). Two choices keep Brahma inside that:
 
@@ -189,6 +214,27 @@ The title in the column is cleaned the same way Phase 1 validated it. If the wri
 - **One alarm per snapshot, not per batch.** The first unsaved write sets the alarm 2 seconds out. When it fires, it checks the time of the last write in memory: if typing is still going on and the 10 second cap has not passed, it moves itself once; otherwise it snapshots. A naive debounce would call `setAlarm()` after every batch and double the writes.
 
 Snapshots, compaction and the dirty marker add a handful of rows per alarm. That still means a few hours of continuous typing per day on the Free plan; a paid plan removes the daily cap.
+
+## Offline
+
+**Where data lives on the device.** Two places, both per browser profile and per origin:
+
+- **IndexedDB, database `brahma`** ([src/lib/collab/local-store.ts](src/lib/collab/local-store.ts)): a compacted Yjs snapshot per document, the updates the server already has, the pending queue of local edits it has not acknowledged, and per-document metadata (title, synced on this device, pending count, halted). Edit writes use `durability: "strict"`, so a completed write survives a browser or operating system crash. Brahma uses its own store instead of y-indexeddb because the pending queue, per-write confirmation and metadata are the point, and one database avoids two sources of truth.
+- **The service worker's caches** ([sw/sw.template.js](sw/sw.template.js)): the hashed app files, the pages of documents opened on this device, and an offline page.
+
+**Load and sync order.** Opening a document applies, in order, what this device has (snapshot, acknowledged updates, pending edits), then the server snapshot embedded in the page (harmless if older), and renders. Then it connects: handshake, flush the pending queue (one tab per document, under a Web Lock), verify convergence by comparing state vectors, and only then send live edits. Each local edit is written to the device and, when connected, sent at once; the server's ack moves it from pending to acknowledged in one transaction. Tabs of the same document share edits through a `BroadcastChannel`, online or not.
+
+**Large and rejected edits.** Queued edits go out oldest first, packed into messages under 1 MiB. Brahma's per-message cap is 4 MiB, an eighth of Cloudflare's 32 MiB ([Workers WebSockets](https://developers.cloudflare.com/workers/runtime-apis/websockets/)). A single change estimated over 1 MB (a huge paste) is refused before it is applied, because one Yjs update cannot be split. If the server rejects a message anyway, the next connection sends one edit per message and waits for each ack. An edit rejected on its own halts sync for that document: later edits depend on it, so nothing is ever skipped. Every edit stays on the device, and "Download a copy" saves the document as HTML.
+
+**Conflicts.** There are none to resolve by hand. Edits made offline, by one person or several, merge through Yjs when they reach the server, and every replica converges to the same text. Two people typing at the same spot offline both keep their words; the order between them is deterministic but arbitrary.
+
+**Delete semantics.** A device learns about a deletion when it reconnects (`4410`) or loads the page. If it holds edits the server never received, it shows "This document was deleted while you were offline." and offers **Save as new document**: an empty document is created and the local copy becomes its pending queue, so the normal flush uploads it. **Discard** clears the local copy. With no unsent edits, the local copy is simply cleared.
+
+**What works offline.** Documents opened on this device (since the service worker was installed) open and edit normally; the sidebar dims the rest as "Not available offline". New documents need the network. Opening a document this device never had shows "This document isn't available offline." with the documents it does have.
+
+**Storage limits.** Data is best-effort unless persistent: Brahma calls `navigator.storage.persist()` on the first local edit. Chromium browsers allow an origin up to 60% of the disk; Firefox's best-effort limit is the smaller of 10% of the disk or 10 GiB; Safari's limits depend on the app, and it may proactively evict data of sites that have not been used for a while ([MDN: storage quotas and eviction](https://developer.mozilla.org/en-US/docs/Web/API/Storage_API/Storage_quotas_and_eviction_criteria)). When a write fails for lack of space, Brahma says "This device is out of storage for Brahma. Your edits still sync while you're online." and keeps those edits in memory until the server acknowledges them, with the leave warning on.
+
+**Shared computers (Phase 4).** Everything above stays on the device after the tab closes. When accounts arrive, signing out must delete the `brahma` IndexedDB database **and** the service worker's caches (they hold document pages), and clear the guest cookies, so the next person on the same computer sees nothing.
 
 ## Why Yjs never loads on the server
 
@@ -207,7 +253,8 @@ documents
   title        text, default ''   copy of the shared title, written by the sync server
   yjs_state    bytea              snapshot of the document's Yjs state, written by the sync server
   created_at   timestamptz
-  updated_at   timestamptz        indexed, drives "sorted by last edit"
+  updated_at   timestamptz        drives "sorted by last edit" (partial index on live rows)
+  deleted_at   timestamptz        tombstone; set first when a document is deleted
 ```
 
 **Why Yjs state was stored from day one.** Phase 1 already kept the body in a `Y.Doc` and stored its binary state, not HTML or ProseMirror JSON. Phase 2 changed the transport (HTTP saves became a WebSocket to a Durable Object) without converting a single document: a room loads the stored bytes as they are.
@@ -280,9 +327,10 @@ src/
   components/editor/   editor, floating toolbar, shared title, presence, sync status
   db/                  Drizzle schema and client
   lib/                 validation and helpers
-  lib/collab/          client-only: SyncProvider, shared title, presence (unit tested)
+  lib/collab/          client-only: SyncProvider, device store, status, tabs, presence (unit tested)
   server/              database access and the sync server's internal API
 packages/protocol/     wire format, limits, presence rules shared by client and server
+sw/                    service worker template (built into public/sw.js)
 workers/sync/          Cloudflare Worker: router, DocumentRoom Durable Object, Postgres store
 e2e/                   Playwright tests, including two-browser collaboration
 drizzle/               SQL migrations
