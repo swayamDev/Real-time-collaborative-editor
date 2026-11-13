@@ -10,6 +10,7 @@ import { LocalStore } from "@/lib/collab/local-store";
 import { syncOwnColor } from "@/lib/collab/presence";
 import { SyncProvider, type SyncStatus } from "@/lib/collab/provider";
 import { syncUrl } from "@/lib/collab/sync-url";
+import { TabChannel } from "@/lib/collab/tab-channel";
 
 export interface SyncSession {
   local: LocalDocument;
@@ -50,6 +51,8 @@ export function useSyncSession(documentId: string, serverSnapshot: string): Sync
         local.destroy();
         return;
       }
+      // Other tabs of this document on this device, online or not.
+      const tabs = new TabChannel(documentId, local.doc);
       const awareness = new Awareness(local.doc);
       // Publish who we are before connecting, so the first presence message
       // the server relays already carries a name and color.
@@ -61,6 +64,7 @@ export function useSyncSession(documentId: string, serverSnapshot: string): Sync
       teardown = () => {
         awareness.off("change", onPresenceChange);
         provider.destroy();
+        tabs.close();
         awareness.destroy();
         local.destroy();
       };
