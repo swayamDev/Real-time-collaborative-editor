@@ -1,7 +1,7 @@
 "use client";
 
 import { EditorContent, useEditor } from "@tiptap/react";
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { base64ToBytes } from "@/lib/base64";
 import { TITLE_MAX_LENGTH, displayTitle } from "@/lib/title";
 import { loadDoc } from "@/lib/yjs";
@@ -9,6 +9,8 @@ import { useDocuments } from "../app-shell";
 import { TopBar } from "../top-bar";
 import { BubbleToolbar } from "./bubble-toolbar";
 import { buildExtensions } from "./extensions";
+import { SaveStatus } from "./save-status";
+import { useAutosave } from "./use-autosave";
 
 interface DocumentEditorProps {
   id: string;
@@ -18,11 +20,26 @@ interface DocumentEditorProps {
 }
 
 export function DocumentEditor({ id, initialTitle, initialState }: DocumentEditorProps) {
-  const { documents, setTitle } = useDocuments();
+  const { documents, setTitle, touch } = useDocuments();
   const title = documents.find((doc) => doc.id === id)?.title ?? initialTitle;
 
   // The Y.Doc is created once per mounted document and is the source of truth.
   const [ydoc] = useState(() => loadDoc(base64ToBytes(initialState)));
+
+  const onSaved = useCallback((updatedAt: string) => touch(id, updatedAt), [touch, id]);
+  const { status, saveTitle, saveNow } = useAutosave({ id, ydoc, onSaved });
+
+  // Mod+S saves right away instead of opening the browser's save dialog.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveNow();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [saveNow]);
 
   const [linkMode, setLinkMode] = useState(false);
   const titleRef = useRef<HTMLTextAreaElement>(null);
@@ -65,7 +82,11 @@ export function DocumentEditor({ id, initialTitle, initialState }: DocumentEdito
 
   return (
     <>
-      <TopBar title={displayTitle(title)} titleMuted={title.trim() === ""} />
+      <TopBar
+        title={displayTitle(title)}
+        titleMuted={title.trim() === ""}
+        status={<SaveStatus status={status} onRetry={saveNow} />}
+      />
       <main id="main" className="flex-1 overflow-y-auto" data-testid="document-scroll">
         <article className="doc-column pt-14 sm:pt-24">
           <textarea
@@ -77,7 +98,11 @@ export function DocumentEditor({ id, initialTitle, initialState }: DocumentEdito
             aria-label="Title"
             data-testid="title"
             spellCheck
-            onChange={(event) => setTitle(id, event.target.value.replace(/\n/g, " "))}
+            onChange={(event) => {
+              const next = event.target.value.replace(/\n/g, " ");
+              setTitle(id, next);
+              saveTitle(next);
+            }}
             onKeyDown={(event) => {
               const field = event.currentTarget;
               const atEnd = field.selectionStart === field.value.length;
