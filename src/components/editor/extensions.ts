@@ -1,5 +1,8 @@
 import { Extension, type Extensions } from "@tiptap/core";
-import Collaboration from "@tiptap/extension-collaboration";
+import Collaboration, { isChangeOrigin } from "@tiptap/extension-collaboration";
+import { LOCAL_EDIT_LIMIT_BYTES } from "@brahma/protocol";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { estimateInsertedBytes } from "@/lib/collab/edit-size";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Placeholder } from "@tiptap/extensions";
@@ -14,12 +17,41 @@ interface EditorShortcutOptions {
   onRequestLink: () => void;
   /** Alt+F10: move focus into the floating toolbar. */
   onFocusToolbar: () => void;
+  /** A local change was refused because it is too large to sync as one update. */
+  onTooLarge: () => void;
 }
+
+/**
+ * Refuse a single local change (typically a paste) that would produce a
+ * Yjs update too large to send. One update cannot be split across
+ * messages, so it must be stopped before it is applied. Remote changes
+ * and undo arrive through Yjs and are never refused.
+ */
+const EditSizeGuard = Extension.create<{ onTooLarge: () => void }>({
+  name: "brahmaEditSizeGuard",
+  addOptions() {
+    return { onTooLarge: () => {} };
+  },
+  addProseMirrorPlugins() {
+    const { onTooLarge } = this.options;
+    return [
+      new Plugin({
+        key: new PluginKey("brahmaEditSizeGuard"),
+        filterTransaction: (transaction) => {
+          if (!transaction.docChanged || isChangeOrigin(transaction)) return true;
+          if (estimateInsertedBytes(transaction) <= LOCAL_EDIT_LIMIT_BYTES) return true;
+          onTooLarge();
+          return false;
+        },
+      }),
+    ];
+  },
+});
 
 const EditorShortcuts = Extension.create<EditorShortcutOptions>({
   name: "brahmaShortcuts",
   addOptions() {
-    return { onRequestLink: () => {}, onFocusToolbar: () => {} };
+    return { onRequestLink: () => {}, onFocusToolbar: () => {}, onTooLarge: () => {} };
   },
   addKeyboardShortcuts() {
     return {
@@ -104,5 +136,6 @@ export function buildExtensions(
       selectionRender: renderSelection,
     }),
     EditorShortcuts.configure(shortcuts),
+    EditSizeGuard.configure({ onTooLarge: shortcuts.onTooLarge }),
   ];
 }

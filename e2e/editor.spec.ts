@@ -102,3 +102,26 @@ test("block type menu turns a paragraph into a heading", async ({ page }) => {
   await expect(page.getByTestId("editor").locator("h2")).toHaveText("Promote me");
   await expectSaved(page);
 });
+
+test("a paste too large to sync is refused with a message", async ({ page }) => {
+  await createDocument(page);
+  await page.getByTestId("title").press("Enter");
+  await page.keyboard.type("Before. ");
+
+  const paste = (text: string) =>
+    page.getByTestId("editor").evaluate((element, value) => {
+      const data = new DataTransfer();
+      data.setData("text/plain", value);
+      element.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    }, text);
+
+  await paste("x".repeat(1_200_000));
+  await expect(page.getByTestId("editor-notice")).toHaveText(
+    "This is too large to add at once. Paste it in smaller parts.",
+  );
+  await expect(page.getByTestId("editor")).toHaveText("Before. ");
+
+  await paste("A normal paste.");
+  await expect(page.getByTestId("editor")).toHaveText("Before. A normal paste.");
+  await expectSaved(page);
+});

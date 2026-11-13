@@ -128,8 +128,11 @@ export class DocumentRoom extends DurableObject<Env> {
 
     switch (message.type) {
       case "sync-step-1":
-        // The client says what it has; reply with everything it lacks.
+        // The client says what it has; reply with everything it lacks, then
+        // with our own state vector, so the client can check that we hold
+        // everything it has (its convergence check after an offline flush).
         ws.send(encodeSyncStep2(doc, message.stateVector));
+        ws.send(encodeSyncStep1(doc));
         return;
 
       case "sync-step-2":

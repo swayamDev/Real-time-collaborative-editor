@@ -6,11 +6,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type * as Y from "yjs";
 import { base64ToBytes } from "@/lib/base64";
 import { loadDoc } from "@/lib/collab/yjs";
+import { TOO_LARGE_TO_ADD } from "@/lib/copy";
 import { displayTitle } from "@/lib/title";
 import { useDocuments } from "../app-shell";
 import { TopBar } from "../top-bar";
 import { BubbleToolbar } from "./bubble-toolbar";
 import { DocumentGone } from "./document-gone";
+import { EditorNotice } from "./editor-notice";
 import { PresenceBar } from "./presence-bar";
 import { buildExtensions } from "./extensions";
 import { SharedTitleField } from "./shared-title-field";
@@ -111,6 +113,8 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }
 
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const editorRef = useRef<Editor | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const dismissNotice = useCallback(() => setNotice(null), []);
   const shownTitle = title === "" && !synced ? initialTitle : title;
 
   if (status === "deleted" || status === "not-found") {
@@ -146,12 +150,19 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }
             }}
           />
           {session ? (
-            <CollaborativeBody doc={ydoc} session={session} editorRef={editorRef} titleRef={titleRef} />
+            <CollaborativeBody
+              doc={ydoc}
+              session={session}
+              editorRef={editorRef}
+              titleRef={titleRef}
+              onNotice={setNotice}
+            />
           ) : (
             <div className="doc-prose doc-body mt-6" />
           )}
         </article>
       </main>
+      <EditorNotice message={notice} onDismiss={dismissNotice} />
     </>
   );
 }
@@ -161,9 +172,11 @@ function CollaborativeBody({
   session,
   editorRef,
   titleRef,
+  onNotice,
 }: {
   doc: Y.Doc;
   session: SyncSession;
+  onNotice: (message: string) => void;
   editorRef: React.RefObject<Editor | null>;
   titleRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
@@ -173,6 +186,7 @@ function CollaborativeBody({
       onRequestLink: () => setLinkMode(true),
       onFocusToolbar: () =>
         document.querySelector<HTMLButtonElement>('[data-testid="bubble-toolbar"] button')?.focus(),
+      onTooLarge: () => onNotice(TOO_LARGE_TO_ADD),
     }, session.awareness),
   );
 

@@ -469,3 +469,16 @@ describe("tombstones", () => {
     expect(memoryStore.rows.get(id)!.state).toBe(before);
   });
 });
+
+describe("convergence check", () => {
+  it("answers a client Step 1 with Step 2 and then its own Step 1", async () => {
+    const id = seed("", "server text");
+    const a = await joined(id);
+    const step1Before = a.count("sync-step-1");
+    const step2Before = a.count("sync-step-2");
+    a.send(encodeSyncStep1(a.doc));
+    await a.until(() => a.count("sync-step-1") > step1Before, "server state vector");
+    expect(a.count("sync-step-2")).toBe(step2Before + 1);
+    expect(a.last("sync-step-1")!.stateVector).toEqual(Y.encodeStateVector(a.doc));
+  });
+});
