@@ -13,7 +13,8 @@
     "test:e2e": "playwright test",
     "db:up": "docker compose up -d --wait",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "check:bundles": "node scripts/check-bundles.mjs"
   },
   "dependencies": {
     "@floating-ui/dom": "^1.8.0",
@@ -24,6 +25,7 @@
     "@tiptap/pm": "3.33.1",
     "@tiptap/react": "3.33.1",
     "@tiptap/starter-kit": "3.33.1",
+    "client-only": "^0.0.1",
     "drizzle-orm": "0.45.4",
     "lucide-react": "^1.72.0",
     "next": "16.4.6",

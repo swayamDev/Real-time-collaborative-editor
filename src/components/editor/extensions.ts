@@ -4,7 +4,7 @@ import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Placeholder } from "@tiptap/extensions";
 import StarterKit from "@tiptap/starter-kit";
 import type * as Y from "yjs";
-import { CONTENT_FIELD } from "@/lib/yjs";
+import { CONTENT_FIELD } from "@/lib/collab/yjs";
 
 interface EditorShortcutOptions {
   /** Mod+K: open the link field in the floating toolbar. */

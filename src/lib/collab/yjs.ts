@@ -1,3 +1,7 @@
+// Yjs must never load on the server: each server bundle would carry its own
+// copy and they would collide in one Node process. This import fails the
+// build if a server component or route ever pulls this module in.
+import "client-only";
 import * as Y from "yjs";
 
 /**

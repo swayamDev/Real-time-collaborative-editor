@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type * as Y from "yjs";
-import { AutosaveController, type SaveStatus, createHttpTransport } from "@/lib/autosave";
+import { AutosaveController, type SaveStatus, createHttpTransport } from "@/lib/collab/autosave";
 
 export type { SaveStatus };
 

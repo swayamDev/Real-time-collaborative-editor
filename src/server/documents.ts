@@ -2,7 +2,7 @@ import "server-only";
 import { desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { documents } from "@/db/schema";
-import { createEmptyState, mergeIntoState } from "@/lib/yjs";
+import { emptyYjsState } from "@/lib/empty-yjs-state";
 
 /** What the sidebar needs. Dates cross the server/client boundary as ISO strings. */
 export interface DocumentSummary {
@@ -44,7 +44,7 @@ export async function getDocument(id: string): Promise<DocumentWithState | null>
 export async function createDocument(): Promise<DocumentSummary> {
   const [row] = await db()
     .insert(documents)
-    .values({ yjsState: createEmptyState() })
+    .values({ yjsState: emptyYjsState() })
     .returning(summaryColumns);
   return toSummary(row);
 }
@@ -71,7 +71,12 @@ export async function deleteDocument(id: string): Promise<boolean> {
  * saves (two tabs today, two people in Phase 2) never overwrite each other.
  * Returns the new `updatedAt`, or null when the document does not exist.
  */
-export async function applyDocumentUpdate(id: string, update: Uint8Array): Promise<string | null> {
+export async function applyDocumentUpdate(
+  id: string,
+  update: Uint8Array,
+  // Passed in by the route handler so this shared module never imports Yjs.
+  merge: (stored: Uint8Array, incoming: Uint8Array) => Uint8Array,
+): Promise<string | null> {
   return db().transaction(async (tx) => {
     const [row] = await tx
       .select({ state: documents.yjsState })
@@ -82,7 +87,7 @@ export async function applyDocumentUpdate(id: string, update: Uint8Array): Promi
 
     const [saved] = await tx
       .update(documents)
-      .set({ yjsState: mergeIntoState(row.state, update), updatedAt: sql`now()` })
+      .set({ yjsState: merge(row.state, update), updatedAt: sql`now()` })
       .where(eq(documents.id, id))
       .returning({ updatedAt: documents.updatedAt });
     return saved.updatedAt.toISOString();

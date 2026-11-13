@@ -1,3 +1,4 @@
+import "client-only";
 import * as Y from "yjs";
 import { chooseTransport } from "./save-transport";
 import { encodeUpdateSince } from "./yjs";

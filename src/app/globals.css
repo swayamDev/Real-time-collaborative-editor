@@ -299,6 +299,11 @@ textarea.doc-title:focus-visible {
   opacity: 1;
 }
 
+/* Reserved before the editor mounts: one line plus the bottom padding. */
+.doc-body {
+  min-height: calc(1.65em + 40vh);
+}
+
 .doc-prose .ProseMirror {
   outline: none;
   line-height: 1.65;

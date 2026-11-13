@@ -190,6 +190,9 @@ importers:
       '@tiptap/starter-kit':
         specifier: 3.33.1
         version: 3.33.1
+      client-only:
+        specifier: ^0.0.1
+        version: 0.0.1
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@types/pg@8.23.1)(pg@8.23.1)

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
-import { DocumentEditor } from "@/components/editor/document-editor";
+import { DocumentEditorLoader } from "@/components/editor/document-editor-loader";
 import { bytesToBase64 } from "@/lib/base64";
 import { isDocumentId } from "@/lib/ids";
 import { displayTitle } from "@/lib/title";
@@ -23,7 +23,7 @@ export default async function DocumentPage({ params }: PageProps<"/d/[id]">) {
   if (!document) notFound();
 
   return (
-    <DocumentEditor
+    <DocumentEditorLoader
       key={document.id}
       id={document.id}
       initialTitle={document.title}

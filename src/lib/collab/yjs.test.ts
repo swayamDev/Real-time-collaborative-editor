@@ -8,6 +8,7 @@ import {
   loadDoc,
   mergeIntoState,
 } from "./yjs";
+import { EMPTY_YJS_STATE, emptyYjsState } from "../empty-yjs-state";
 
 function writeParagraph(doc: Y.Doc, text: string): void {
   const fragment = doc.getXmlFragment(CONTENT_FIELD);
@@ -24,6 +25,13 @@ function contentOf(doc: Y.Doc): string {
 function persist(stored: Uint8Array, ...updates: Uint8Array[]): Uint8Array {
   return updates.reduce((state, update) => mergeIntoState(state, update), stored);
 }
+
+describe("EMPTY_YJS_STATE", () => {
+  it("matches the encoding of a new, empty Y.Doc", () => {
+    expect(Uint8Array.from(EMPTY_YJS_STATE)).toEqual(Y.encodeStateAsUpdate(new Y.Doc()));
+    expect(createEmptyState()).toEqual(emptyYjsState());
+  });
+});
 
 describe("createEmptyState and loadDoc", () => {
   it("loads an empty state into an empty document", () => {

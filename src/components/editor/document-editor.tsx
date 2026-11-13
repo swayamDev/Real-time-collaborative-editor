@@ -5,7 +5,7 @@ import { type Editor, EditorContent, useEditor } from "@tiptap/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { base64ToBytes } from "@/lib/base64";
 import { TITLE_MAX_LENGTH, displayTitle } from "@/lib/title";
-import { loadDoc } from "@/lib/yjs";
+import { loadDoc } from "@/lib/collab/yjs";
 import { useDocuments } from "../app-shell";
 import { TopBar } from "../top-bar";
 import { BubbleToolbar } from "./bubble-toolbar";
@@ -146,7 +146,7 @@ export function DocumentEditor({ id, initialTitle, initialUpdatedAt, initialStat
             className="doc-title block w-full resize-none overflow-hidden bg-transparent outline-none"
           />
           <div
-            className="doc-prose mt-6"
+            className="doc-prose doc-body mt-6"
             onKeyDown={(event) => {
               // ArrowUp on the first line moves back to the title.
               if (event.key !== "ArrowUp" || !editor) return;
