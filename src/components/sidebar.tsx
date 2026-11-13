@@ -12,6 +12,7 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { DocumentRow } from "./document-row";
 import { IconButton, iconProps } from "./icon-button";
 import { NewDocumentButton } from "./new-document-button";
+import { useDeviceDocuments, useOnline } from "./use-device";
 
 export function activeDocumentId(pathname: string): string | null {
   const match = /^\/d\/([^/]+)/.exec(pathname);
@@ -20,6 +21,8 @@ export function activeDocumentId(pathname: string): string | null {
 
 export function Sidebar({ variant }: { variant: "docked" | "drawer" }) {
   const { documents, remove } = useDocuments();
+  const online = useOnline();
+  const onDevice = useDeviceDocuments();
   const { toggleSidebar, closeDrawer } = useShell();
   const pathname = usePathname();
   const router = useRouter();
@@ -80,6 +83,8 @@ export function Sidebar({ variant }: { variant: "docked" | "drawer" }) {
                 key={document.id}
                 document={document}
                 active={document.id === activeId}
+                unsynced={(onDevice.get(document.id)?.pendingCount ?? 0) > 0}
+                unavailableOffline={!online && !onDevice.has(document.id)}
                 onRequestDelete={() => {
                   setDeleteError(null);
                   setToDelete(document);

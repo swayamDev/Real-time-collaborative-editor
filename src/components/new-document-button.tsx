@@ -5,13 +5,17 @@ import { useFormStatus } from "react-dom";
 import { createDocumentAction } from "@/app/actions";
 import { cn } from "@/lib/cn";
 import { iconProps } from "./icon-button";
+import { useOnline } from "./use-device";
 
 function SubmitButton({ variant }: { variant: "sidebar" | "primary" }) {
   const { pending } = useFormStatus();
+  // Creating a document needs the server; offline creation is out of scope.
+  const online = useOnline();
   return (
     <button
       type="submit"
-      disabled={pending}
+      disabled={pending || !online}
+      title={online ? undefined : "Available when you're back online."}
       className={cn(
         "inline-flex items-center gap-2 rounded-sm font-medium transition-colors duration-100",
         variant === "sidebar"

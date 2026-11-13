@@ -4,11 +4,14 @@ import { Selection } from "@tiptap/pm/state";
 import { type Editor, EditorContent, useEditor } from "@tiptap/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type * as Y from "yjs";
-import { TOO_LARGE_TO_ADD } from "@/lib/copy";
+import { TITLE_FIELD } from "@brahma/protocol";
+import { downloadFile, documentHtml, exportFileName } from "@/lib/collab/export-html";
+import { STORAGE_FULL, SYNC_HALTED, TOO_LARGE_TO_ADD } from "@/lib/copy";
 import { displayTitle } from "@/lib/title";
 import { useDocuments } from "../app-shell";
 import { TopBar } from "../top-bar";
 import { BubbleToolbar } from "./bubble-toolbar";
+import { DocumentBanner } from "./document-banner";
 import { DocumentGone } from "./document-gone";
 import { EditorNotice } from "./editor-notice";
 import { PresenceBar } from "./presence-bar";
@@ -16,7 +19,13 @@ import { buildExtensions } from "./extensions";
 import { SharedTitleField } from "./shared-title-field";
 import { SyncStatus } from "./sync-status";
 import { TitleSkeleton } from "./title-skeleton";
-import { type SyncSession, usePendingEdits, useSyncSession, useSyncStatus } from "./use-sync-session";
+import {
+  type SyncSession,
+  usePendingEdits,
+  useStorageFull,
+  useSyncSession,
+  useSyncStatus,
+} from "./use-sync-session";
 
 /**
  * Move the caret to the start of the body synchronously. TipTap's focus
@@ -76,6 +85,7 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }
   const session = useSyncSession(id, initialState);
   const status = useSyncStatus(session);
   const pending = usePendingEdits(session);
+  const storageFull = useStorageFull(session);
 
   // The shared title is authoritative once this device has synced the
   // document, now or on an earlier visit. Before that, a Phase 1 title only
@@ -138,6 +148,20 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }
         presence={session && <PresenceBar awareness={session.awareness} />}
       />
       <main id="main" className="flex-1 overflow-y-auto" data-testid="document-scroll">
+        {status === "halted" && (
+          <DocumentBanner
+            testId="sync-halted"
+            message={SYNC_HALTED}
+            action={{
+              label: "Download a copy",
+              onClick: () => {
+                const currentTitle = session?.local.doc.getText(TITLE_FIELD).toString() ?? title;
+                downloadFile(exportFileName(currentTitle), documentHtml(currentTitle, editorRef.current?.getHTML() ?? ""));
+              },
+            }}
+          />
+        )}
+        {storageFull && status !== "halted" && <DocumentBanner testId="storage-full" message={STORAGE_FULL} />}
         <article className="doc-column pt-14 sm:pt-24">
           {session ? (
           <SharedTitleField

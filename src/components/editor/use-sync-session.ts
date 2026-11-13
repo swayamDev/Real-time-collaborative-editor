@@ -6,7 +6,7 @@ import { Awareness } from "y-protocols/awareness";
 import { base64ToBytes } from "@/lib/base64";
 import { readGuestIdentity } from "@/lib/collab/identity";
 import { LocalDocument } from "@/lib/collab/local-document";
-import { LocalStore } from "@/lib/collab/local-store";
+import { getLocalStore } from "@/lib/collab/device-store";
 import { syncOwnColor } from "@/lib/collab/presence";
 import { SyncProvider, type SyncStatus } from "@/lib/collab/provider";
 import { syncUrl } from "@/lib/collab/sync-url";
@@ -16,21 +16,6 @@ export interface SyncSession {
   local: LocalDocument;
   provider: SyncProvider;
   awareness: Awareness;
-}
-
-let storePromise: Promise<LocalStore | null> | null = null;
-
-/**
- * The device store, opened once per page. Null when IndexedDB is not
- * available (some private browsing modes): the editor then works online
- * only, keeping edits in memory until the server acknowledges them.
- */
-export function getLocalStore(): Promise<LocalStore | null> {
-  storePromise ??= LocalStore.open().catch((error: unknown) => {
-    console.warn("IndexedDB is unavailable; edits will not be kept on this device", error);
-    return null;
-  });
-  return storePromise;
 }
 
 /**
@@ -100,6 +85,15 @@ export function usePendingEdits(session: SyncSession | null): boolean {
   return useSyncExternalStore(
     session ? (listener) => session.provider.subscribe(listener) : noop,
     () => session?.provider.hasPendingEdits ?? false,
+    () => false,
+  );
+}
+
+/** The device ran out of storage; edits are kept in memory until acknowledged. */
+export function useStorageFull(session: SyncSession | null): boolean {
+  return useSyncExternalStore(
+    session ? (listener) => session.provider.subscribe(listener) : noop,
+    () => session?.local.storageFull ?? false,
     () => false,
   );
 }

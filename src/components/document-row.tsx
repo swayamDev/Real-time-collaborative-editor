@@ -16,10 +16,14 @@ import { RelativeTime } from "./relative-time";
 interface DocumentRowProps {
   document: DocumentSummary;
   active: boolean;
+  /** Local edits on this device the server has not acknowledged. */
+  unsynced: boolean;
+  /** Offline, and this device has no copy. */
+  unavailableOffline: boolean;
   onRequestDelete: () => void;
 }
 
-export function DocumentRow({ document, active, onRequestDelete }: DocumentRowProps) {
+export function DocumentRow({ document, active, unsynced, unavailableOffline, onRequestDelete }: DocumentRowProps) {
   const { setTitle, touch } = useDocuments();
   const [renaming, setRenaming] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -71,6 +75,15 @@ export function DocumentRow({ document, active, onRequestDelete }: DocumentRowPr
           onBlur={(event) => void commitRename(event.currentTarget.value)}
           className="focus-inset h-8 w-full rounded-sm border border-indigo bg-raised px-2 text-ui-sm text-ink outline-none placeholder:text-ink-muted"
         />
+      ) : unavailableOffline ? (
+        <div
+          aria-disabled="true"
+          data-testid="unavailable-offline"
+          className="flex h-8 items-center gap-2 rounded-sm px-2 text-ui-sm text-ink-muted"
+        >
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          <span className="shrink-0 text-meta">Not available offline</span>
+        </div>
       ) : (
         <>
           <Link
@@ -83,6 +96,12 @@ export function DocumentRow({ document, active, onRequestDelete }: DocumentRowPr
             )}
           >
             <span className={cn("min-w-0 flex-1 truncate", untitled && "text-ink-muted")}>{label}</span>
+            {unsynced && (
+              <span data-testid="unsynced-marker" className="flex shrink-0 items-center">
+                <span aria-hidden className="size-1.5 rounded-full bg-indigo" />
+                <span className="sr-only">Not yet synced</span>
+              </span>
+            )}
             <RelativeTime
               iso={document.updatedAt}
               className={cn(

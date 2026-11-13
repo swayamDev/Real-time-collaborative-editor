@@ -31,6 +31,19 @@ export interface PendingEntry {
 
 type Listener = () => void;
 
+let persistenceRequested = false;
+
+/**
+ * Ask the browser not to evict this site's storage under pressure. Asked on
+ * the first local edit rather than on load, so browsers that prompt (Firefox)
+ * do so when it is clearly useful.
+ */
+function requestPersistentStorage(): void {
+  if (persistenceRequested || typeof navigator === "undefined") return;
+  persistenceRequested = true;
+  void navigator.storage?.persist?.().catch(() => false);
+}
+
 function mergeToState(updates: Uint8Array[]): Uint8Array {
   const doc = new Y.Doc();
   for (const update of updates) Y.applyUpdate(doc, update);
@@ -204,6 +217,7 @@ export class LocalDocument {
   };
 
   private recordLocalEdit(update: Uint8Array): void {
+    requestPersistentStorage();
     const edit: LocalEdit = { update, createdAt: Date.now(), seq: Promise.resolve(null) };
     this.pendingCount += 1;
     if (this.store && !this.storageFull) {

@@ -17,6 +17,8 @@
  */
 
 export const DB_NAME = "brahma";
+/** Every tab hears about metadata changes here (pending counts, titles, deletions). */
+export const STORE_CHANNEL = "brahma-store";
 const DB_VERSION = 1;
 
 export interface DocumentMeta {
@@ -94,7 +96,15 @@ function standalone(bytes: Uint8Array): Uint8Array {
 }
 
 export class LocalStore {
+  private readonly channel: BroadcastChannel | null =
+    typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(STORE_CHANNEL);
+
   private constructor(private readonly db: IDBDatabase) {}
+
+  /** Tell every tab (this one included) that a document's metadata changed. */
+  private announce(docId: string): void {
+    this.channel?.postMessage({ docId });
+  }
 
   static async open(factory: IDBFactory = indexedDB, name = DB_NAME): Promise<LocalStore> {
     const req = factory.open(name, DB_VERSION);
@@ -110,6 +120,7 @@ export class LocalStore {
   }
 
   close(): void {
+    this.channel?.close();
     this.db.close();
   }
 
@@ -151,6 +162,7 @@ export class LocalStore {
     documents.put({ ...meta, pendingCount: meta.pendingCount + 1 });
     const seq = (await seqPromise) as number;
     await finished;
+    this.announce(docId);
     return seq;
   }
 
@@ -193,6 +205,7 @@ export class LocalStore {
     const meta = await this.readMeta(documents, docId);
     documents.put({ ...meta, pendingCount: Math.max(0, meta.pendingCount - moved) });
     await finished;
+    this.announce(docId);
   }
 
   async updateCount(docId: string): Promise<number> {
@@ -251,6 +264,7 @@ export class LocalStore {
     const next = { ...(await this.readMeta(documents, docId)), ...patch, id: docId };
     documents.put(next);
     await finished;
+    this.announce(docId);
     return next;
   }
 
@@ -274,5 +288,6 @@ export class LocalStore {
       for (const key of keys) store.delete(key);
     }
     await finished;
+    this.announce(docId);
   }
 }
