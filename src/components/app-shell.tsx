@@ -31,6 +31,8 @@ interface DocumentsContextValue {
   /** Record a confirmed save so the document moves to the top. */
   touch: (id: string, updatedAt: string) => void;
   remove: (id: string) => void;
+  /** Make sure a document is listed, e.g. one just created or opened by URL. */
+  ensure: (document: DocumentSummary) => void;
 }
 
 const ShellContext = createContext<ShellContextValue | null>(null);
@@ -88,9 +90,15 @@ export function AppShell({
     setDocuments((docs) => docs.filter((doc) => doc.id !== id));
   }, []);
 
+  const ensure = useCallback((document: DocumentSummary) => {
+    setDocuments((docs) =>
+      docs.some((doc) => doc.id === document.id) ? docs : [...docs, document].sort(byLastEdited),
+    );
+  }, []);
+
   const documentsValue = useMemo(
-    () => ({ documents, setTitle, touch, remove }),
-    [documents, setTitle, touch, remove],
+    () => ({ documents, setTitle, touch, remove, ensure }),
+    [documents, setTitle, touch, remove, ensure],
   );
 
   // Theme

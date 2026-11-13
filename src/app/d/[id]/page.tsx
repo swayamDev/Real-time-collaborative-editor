@@ -27,6 +27,7 @@ export default async function DocumentPage({ params }: PageProps<"/d/[id]">) {
       key={document.id}
       id={document.id}
       initialTitle={document.title}
+      initialUpdatedAt={document.updatedAt}
       initialState={bytesToBase64(document.state)}
     />
   );

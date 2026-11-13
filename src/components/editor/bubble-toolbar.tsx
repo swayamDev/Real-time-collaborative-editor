@@ -264,9 +264,24 @@ function LinkField({
   onRemove: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  // The bubble menu may still be hidden while it positions itself, and a
+  // hidden input cannot take focus (it re-measures after a 250ms delay).
+  // Retry for up to about 40 frames until focus lands.
   useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
+    let frame = 0;
+    let attempts = 0;
+    const tryFocus = () => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      if (document.activeElement === input) {
+        input.select();
+      } else if (attempts++ < 40) {
+        frame = requestAnimationFrame(tryFocus);
+      }
+    };
+    tryFocus();
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   return (

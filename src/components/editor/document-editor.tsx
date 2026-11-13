@@ -1,6 +1,7 @@
 "use client";
 
-import { EditorContent, useEditor } from "@tiptap/react";
+import { Selection } from "@tiptap/pm/state";
+import { type Editor, EditorContent, useEditor } from "@tiptap/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { base64ToBytes } from "@/lib/base64";
 import { TITLE_MAX_LENGTH, displayTitle } from "@/lib/title";
@@ -12,16 +13,41 @@ import { buildExtensions } from "./extensions";
 import { SaveStatus } from "./save-status";
 import { useAutosave } from "./use-autosave";
 
+/**
+ * Move the caret to the start of the body synchronously. TipTap's focus
+ * command waits a frame, which drops keystrokes typed right after Enter.
+ */
+function focusBodyStart(editor: Editor): void {
+  const { state, view } = editor;
+  view.dispatch(state.tr.setSelection(Selection.atStart(state.doc)));
+  view.focus();
+}
+
 interface DocumentEditorProps {
   id: string;
   initialTitle: string;
+  initialUpdatedAt: string;
   /** Base64 of the stored Yjs state. */
   initialState: string;
 }
 
-export function DocumentEditor({ id, initialTitle, initialState }: DocumentEditorProps) {
-  const { documents, setTitle, touch } = useDocuments();
-  const title = documents.find((doc) => doc.id === id)?.title ?? initialTitle;
+export function DocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }: DocumentEditorProps) {
+  const { documents, setTitle, touch, ensure } = useDocuments();
+
+  // The title field owns its value. It follows the shared list only when the
+  // document is renamed elsewhere (the sidebar), so typing never depends on
+  // the list being up to date.
+  const [title, setLocalTitle] = useState(initialTitle);
+  const listedTitle = documents.find((doc) => doc.id === id)?.title;
+  const [seenListedTitle, setSeenListedTitle] = useState(listedTitle);
+  if (listedTitle !== seenListedTitle) {
+    setSeenListedTitle(listedTitle);
+    if (listedTitle !== undefined && listedTitle !== title) setLocalTitle(listedTitle);
+  }
+
+  useEffect(() => {
+    ensure({ id, title: initialTitle, updatedAt: initialUpdatedAt });
+  }, [ensure, id, initialTitle, initialUpdatedAt]);
 
   // The Y.Doc is created once per mounted document and is the source of truth.
   const [ydoc] = useState(() => loadDoc(base64ToBytes(initialState)));
@@ -100,6 +126,7 @@ export function DocumentEditor({ id, initialTitle, initialState }: DocumentEdito
             spellCheck
             onChange={(event) => {
               const next = event.target.value.replace(/\n/g, " ");
+              setLocalTitle(next);
               setTitle(id, next);
               saveTitle(next);
             }}
@@ -108,7 +135,7 @@ export function DocumentEditor({ id, initialTitle, initialState }: DocumentEdito
               const atEnd = field.selectionStart === field.value.length;
               if (event.key === "Enter" || (event.key === "ArrowDown" && atEnd)) {
                 event.preventDefault();
-                editor?.commands.focus("start");
+                if (editor) focusBodyStart(editor);
               }
             }}
             className="doc-title block w-full resize-none overflow-hidden bg-transparent outline-none"
