@@ -12,7 +12,7 @@ import { useDocuments } from "../app-shell";
 import { TopBar } from "../top-bar";
 import { BubbleToolbar } from "./bubble-toolbar";
 import { DocumentBanner } from "./document-banner";
-import { DocumentGone } from "./document-gone";
+import { DeletedDocument } from "./deleted-document";
 import { EditorNotice } from "./editor-notice";
 import { PresenceBar } from "./presence-bar";
 import { buildExtensions } from "./extensions";
@@ -65,7 +65,7 @@ export function DocumentEditor(props: DocumentEditorProps) {
       <>
         <TopBar title={displayTitle(props.initialTitle)} titleMuted />
         <main id="main" className="flex-1 overflow-y-auto">
-          <DocumentGone reason="deleted" />
+          <DeletedDocument id={props.id} reason="deleted" />
         </main>
       </>
     );
@@ -133,7 +133,7 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }
       <>
         <TopBar title={displayTitle(shownTitle)} titleMuted />
         <main id="main" className="flex-1 overflow-y-auto">
-          <DocumentGone reason={status} />
+          <DeletedDocument id={id} reason={status} />
         </main>
       </>
     );

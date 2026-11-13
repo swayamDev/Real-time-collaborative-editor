@@ -43,10 +43,14 @@ export async function getDocument(id: string): Promise<DocumentWithState | null>
   return row ? { ...toSummary(row), state: row.state, deleted: row.deletedAt !== null } : null;
 }
 
-export async function createDocument(): Promise<DocumentSummary> {
+/**
+ * A new, empty document. The title only seeds the list; the sync server
+ * copies the shared title over it on the first snapshot.
+ */
+export async function createDocument(title = ""): Promise<DocumentSummary> {
   const [row] = await db()
     .insert(documents)
-    .values({ yjsState: emptyYjsState() })
+    .values({ yjsState: emptyYjsState(), title })
     .returning(summaryColumns);
   return toSummary(row);
 }

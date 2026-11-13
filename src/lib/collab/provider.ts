@@ -11,7 +11,6 @@ import {
   encodeSyncStep1,
   encodeUpdate,
 } from "@brahma/protocol";
-import * as encoding from "lib0/encoding";
 import {
   type Awareness,
   applyAwarenessUpdate,
@@ -20,6 +19,7 @@ import {
 } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { type LocalDocument, type LocalEdit, type PendingEntry, REMOTE_ORIGIN } from "./local-document";
+import { encodeStateVectorMap } from "./state-vector";
 import { type SyncStatus, computeStatus } from "./status";
 
 export type { SyncStatus };
@@ -500,7 +500,7 @@ export class SyncProvider {
         // Pretend the server has everything except this client's missing range.
         const target = new Map(local);
         target.set(client, server.get(client) ?? 0);
-        const update = Y.encodeStateAsUpdate(doc, encodeTargetVector(target));
+        const update = Y.encodeStateAsUpdate(doc, encodeStateVectorMap(target));
         // Applied by the server like any update, and acknowledged.
         const count = this.send(connection, encodeUpdate(update), []);
         await this.waitForAck(connection, count);
@@ -586,15 +586,4 @@ export class SyncProvider {
       this.updateStatus();
     }, due);
   }
-}
-
-/** Encode a state vector from a map, in the format Y.encodeStateVector produces. */
-function encodeTargetVector(vector: Map<number, number>): Uint8Array {
-  const encoder = encoding.createEncoder();
-  encoding.writeVarUint(encoder, vector.size);
-  vector.forEach((clock, client) => {
-    encoding.writeVarUint(encoder, client);
-    encoding.writeVarUint(encoder, clock);
-  });
-  return encoding.toUint8Array(encoder);
 }

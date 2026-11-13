@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { DELETE_FAILED, RENAME_FAILED } from "@/lib/copy";
+import { DELETE_FAILED, RENAME_FAILED, SAVE_COPY_FAILED } from "@/lib/copy";
 import { isDocumentId } from "@/lib/ids";
 import { validateTitle } from "@/lib/title";
 import { type DocumentSummary, createDocument, tombstoneDocument } from "@/server/documents";
@@ -14,6 +14,24 @@ export async function createDocumentAction(): Promise<never> {
   const document = await createDocument();
   revalidatePath("/", "layout");
   redirect(`/d/${document.id}`);
+}
+
+/**
+ * An empty document to receive a local copy ("Save as new document" after
+ * the original was deleted while this device was offline). The client
+ * uploads the content itself through its offline queue.
+ */
+export async function createDocumentCopyAction(rawTitle: string): Promise<ActionResult<DocumentSummary>> {
+  const result = validateTitle(rawTitle);
+  const title = result.ok ? result.title : "";
+  try {
+    const document = await createDocument(title);
+    revalidatePath("/", "layout");
+    return { ok: true, value: document };
+  } catch (error) {
+    console.error("Create failed", error);
+    return { ok: false, error: SAVE_COPY_FAILED };
+  }
 }
 
 /**
