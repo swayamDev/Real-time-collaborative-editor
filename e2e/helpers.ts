@@ -48,3 +48,30 @@ export async function waitForEditorSelection(page: Page, text: string): Promise<
     return state ? state.doc.textBetween(state.selection.from, state.selection.to) === expected : false;
   }, text);
 }
+
+/**
+ * Wait until the service worker controls the page and holds a copy of the
+ * current document page, so an offline reload is really served offline.
+ */
+export async function expectReadyOffline(page: Page): Promise<void> {
+  await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller), undefined, { timeout: 15_000 });
+  const path = new URL(page.url()).pathname;
+  await page.waitForFunction(async (url) => Boolean(await caches.match(url)), path, { timeout: 15_000 });
+}
+
+/** Document text without collaborator caret flags. */
+export function bodyText(page: Page): Promise<string> {
+  return page.getByTestId("editor").evaluate((element) => {
+    const copy = element.cloneNode(true) as HTMLElement;
+    copy.querySelectorAll(".collab-caret").forEach((caret) => caret.remove());
+    return copy.textContent ?? "";
+  });
+}
+
+export async function expectBody(page: Page, expected: string, timeout = 15_000): Promise<void> {
+  await expect.poll(() => bodyText(page), { timeout }).toBe(expected);
+}
+
+export async function expectStatus(page: Page, label: string, timeout = 15_000): Promise<void> {
+  await expect(page.getByTestId("sync-status")).toHaveText(label, { timeout });
+}
