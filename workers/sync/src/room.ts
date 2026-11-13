@@ -62,6 +62,12 @@ export class DocumentRoom extends DurableObject<Env> {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   /** Batches written since this instance started; detects edits during a snapshot. */
   private writes = 0;
+  /** When the last batch was written; drives the snapshot debounce. */
+  private lastWriteAt = 0;
+  /** The alarm time this instance set, or null if it set none. */
+  private alarmSetFor: number | null = null;
+  /** Snapshot without waiting for typing to pause (room emptied, rename). */
+  private snapshotUrgent = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -212,7 +218,7 @@ export class DocumentRoom extends DurableObject<Env> {
     }, "internal");
     this.flush();
     // The sidebar list reads the column, so snapshot right away.
-    await this.ctx.storage.setAlarm(Date.now());
+    this.snapshotSoon();
     return Response.json({ title: cleaned });
   }
 
@@ -295,19 +301,40 @@ export class DocumentRoom extends DurableObject<Env> {
 
   // Snapshots to Postgres
 
-  /** Debounce the snapshot after each write, capped by the oldest unsaved edit. */
+  /**
+   * Schedule a snapshot after a write. Every setAlarm() is billed as a row
+   * written, so the alarm is set once per snapshot cycle, not per batch;
+   * the alarm handler pushes itself back while typing continues.
+   */
   private afterWrite(): void {
     this.writes += 1;
+    this.lastWriteAt = Date.now();
+    if (this.alarmSetFor === null) this.scheduleAlarm(this.snapshotDue());
+  }
+
+  /** About 2s after the last write, never later than 10s after the oldest unsaved edit. */
+  private snapshotDue(): number {
     const dirtySince = this.storage.dirtySince() ?? Date.now();
-    const due = Math.min(Date.now() + SNAPSHOT_DEBOUNCE_MS, dirtySince + SNAPSHOT_MAX_WAIT_MS);
-    void this.ctx.storage.setAlarm(due);
+    return Math.min(this.lastWriteAt + SNAPSHOT_DEBOUNCE_MS, dirtySince + SNAPSHOT_MAX_WAIT_MS);
+  }
+
+  private scheduleAlarm(at: number): void {
+    this.alarmSetFor = at;
+    void this.ctx.storage.setAlarm(at);
+  }
+
+  /** Snapshot as soon as possible, skipping the debounce. */
+  private snapshotSoon(): void {
+    this.snapshotUrgent = true;
+    const now = Date.now();
+    if (this.alarmSetFor === null || this.alarmSetFor > now) this.scheduleAlarm(now);
   }
 
   /** Everyone left: store what is pending and snapshot right away. */
   private lastClientLeft(): void {
     if (this.deleted || !this.doc) return;
     this.flush();
-    if (this.storage.dirtySince() !== null) void this.ctx.storage.setAlarm(Date.now());
+    if (this.storage.dirtySince() !== null) this.snapshotSoon();
   }
 
   /**
@@ -319,9 +346,19 @@ export class DocumentRoom extends DurableObject<Env> {
   async alarm(): Promise<void> {
     const doc = this.doc;
     const documentId = this.storage.documentId();
+    this.alarmSetFor = null;
     if (this.deleted || !doc || !documentId) return;
     this.flush();
     if (this.storage.dirtySince() === null) return;
+
+    // Still typing and under the 10s cap: move the alarm once instead of
+    // saving now. After an eviction lastWriteAt is 0, so this saves.
+    const due = this.snapshotDue();
+    if (!this.snapshotUrgent && due > Date.now() + 50) {
+      this.scheduleAlarm(due);
+      return;
+    }
+    this.snapshotUrgent = false;
 
     const writesBefore = this.writes;
     const state = Y.encodeStateAsUpdate(doc);
@@ -338,7 +375,7 @@ export class DocumentRoom extends DurableObject<Env> {
       this.storage.writeSnapshot(state);
     } else {
       // Edits arrived during the save; snapshot again soon.
-      await this.ctx.storage.setAlarm(Date.now() + SNAPSHOT_DEBOUNCE_MS);
+      this.scheduleAlarm(Date.now() + SNAPSHOT_DEBOUNCE_MS);
     }
   }
 

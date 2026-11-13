@@ -7,7 +7,7 @@ import {
   encodeSyncStep1,
   encodeUpdate,
 } from "@brahma/protocol";
-import { SELF, env, evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { SELF, env, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { Awareness, encodeAwarenessUpdate } from "y-protocols/awareness";
 import * as Y from "yjs";
@@ -224,6 +224,22 @@ describe("hibernation", () => {
   });
 });
 
+function savedBody(id: string): string {
+  const row = memoryStore.rows.get(id);
+  if (!row) return "";
+  const saved = new Y.Doc();
+  Y.applyUpdate(saved, row.state);
+  return saved.getText("body").toString();
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs: number, label: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 describe("snapshots to Postgres", () => {
   function alarmAt(id: string): Promise<number | null> {
     return runInDurableObject(stubFor(id), (_instance, state) => state.storage.getAlarm());
@@ -245,7 +261,8 @@ describe("snapshots to Postgres", () => {
     expect(due! - Date.now()).toBeGreaterThan(500);
     expect(due! - Date.now()).toBeLessThanOrEqual(2_000);
 
-    expect(await runDurableObjectAlarm(stubFor(id))).toBe(true);
+    // The runtime fires the alarm on its own about 2 seconds after the write.
+    await waitUntil(() => savedBody(id) === "snapshot me", 4_000, "snapshot");
     const row = memoryStore.rows.get(id)!;
     const saved = new Y.Doc();
     Y.applyUpdate(saved, row.state);
@@ -254,18 +271,48 @@ describe("snapshots to Postgres", () => {
     expect(row.title).toBe("New title");
   });
 
-  it("caps the debounce at ten seconds after the oldest unsaved edit", async () => {
+  it("sets the alarm once per snapshot cycle, not once per batch", async () => {
+    const id = seed();
+    const a = await joined(id);
+    a.edit((doc) => doc.getText("body").insert(0, "first batch"));
+    await a.until(() => a.last("ack")!.count >= 2, "stored");
+    const first = await alarmAt(id);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    a.edit((doc) => doc.getText("body").insert(0, "second batch "));
+    await a.until(() => a.last("ack")!.count >= 3, "stored again");
+    // Each setAlarm() is a billed row write; a later batch must not move it.
+    expect(await alarmAt(id)).toBe(first);
+  });
+
+  it("pushes the snapshot back while typing continues", async () => {
+    const id = seed();
+    const a = await joined(id);
+    a.edit((doc) => doc.getText("body").insert(0, "still typing"));
+    await a.until(() => a.last("ack")!.count >= 2, "stored");
+    const savesBefore = memoryStore.saves;
+
+    // The alarm fires early relative to the last write: it reschedules instead of saving.
+    await runInDurableObject(stubFor(id), (instance) => instance.alarm());
+    expect(memoryStore.saves).toBe(savesBefore);
+    expect((await alarmAt(id))! - Date.now()).toBeGreaterThan(500);
+  });
+
+  it("saves at the ten second cap even while typing continues", async () => {
     const id = seed();
     const a = await joined(id);
     a.edit((doc) => doc.getText("body").insert(0, "x"));
     await a.until(() => a.last("ack")!.count >= 2, "stored");
-    // Pretend the oldest unsaved edit happened 9.5 seconds ago.
+    // Pretend the oldest unsaved edit happened 10.5 seconds ago.
     await runInDurableObject(stubFor(id), (_instance, state) => {
-      state.storage.sql.exec("UPDATE meta SET value = ? WHERE key = 'dirty_since'", String(Date.now() - 9_500));
+      state.storage.sql.exec("UPDATE meta SET value = ? WHERE key = 'dirty_since'", String(Date.now() - 10_500));
     });
     a.edit((doc) => doc.getText("body").insert(0, "y"));
     await a.until(() => a.last("ack")!.count >= 3, "stored again");
-    expect((await alarmAt(id))! - Date.now()).toBeLessThanOrEqual(600);
+    const savesBefore = memoryStore.saves;
+
+    await runInDurableObject(stubFor(id), (instance) => instance.alarm());
+    expect(memoryStore.saves).toBe(savesBefore + 1);
   });
 
   it("snapshots immediately when the last client leaves", async () => {
@@ -293,13 +340,11 @@ describe("snapshots to Postgres", () => {
     a.edit((doc) => doc.getText("body").insert(0, "retry me"));
     await a.until(() => a.last("ack")!.count >= 2, "stored");
 
+    // Leaving makes the snapshot urgent; the first attempt fails.
     memoryStore.failNextSave = true;
-    await expect(runInDurableObject(stubFor(id), (instance) => instance.alarm())).rejects.toThrow();
-    await runInDurableObject(stubFor(id), (instance) => instance.alarm());
-
-    const saved = new Y.Doc();
-    Y.applyUpdate(saved, memoryStore.rows.get(id)!.state);
-    expect(saved.getText("body").toString()).toBe("retry me");
+    a.close();
+    // The runtime retries a throwing alarm with backoff (2s first).
+    await waitUntil(() => savedBody(id) === "retry me", 8_000, "retried snapshot");
   });
 
   it("deletes the room when the Postgres row is gone", async () => {
