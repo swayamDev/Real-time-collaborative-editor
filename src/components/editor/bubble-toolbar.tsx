@@ -49,8 +49,16 @@ function currentBlock(editor: Editor): BlockType {
   return "paragraph";
 }
 
+/**
+ * Return focus to the editor without TipTap's focus command, which restores
+ * the selection a frame later and can undo keys pressed in between.
+ */
+function refocus(editor: Editor): void {
+  if (!editor.view.hasFocus()) editor.view.focus();
+}
+
 function setBlock(editor: Editor, block: BlockType): void {
-  const chain = editor.chain().focus().clearNodes();
+  const chain = editor.chain().clearNodes();
   switch (block) {
     case "paragraph":
       chain.setParagraph().run();
@@ -76,6 +84,7 @@ function setBlock(editor: Editor, block: BlockType): void {
       chain.toggleCodeBlock().run();
       break;
   }
+  refocus(editor);
 }
 
 /** Adds https:// to bare domains like "example.com"; leaves other schemes alone. */
@@ -152,7 +161,7 @@ export function BubbleToolbar({ editor, linkMode, setLinkMode }: BubbleToolbarPr
           if (event.key === "Escape") {
             event.preventDefault();
             setLinkMode(false);
-            editor.commands.focus();
+            refocus(editor);
           }
           if (!linkMode && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
             const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button"));
@@ -170,14 +179,16 @@ export function BubbleToolbar({ editor, linkMode, setLinkMode }: BubbleToolbarPr
             initialHref={state.href}
             hasLink={state.link}
             onApply={(href) => {
-              const chain = editor.chain().focus().extendMarkRange("link");
+              const chain = editor.chain().extendMarkRange("link");
               if (href === "") chain.unsetLink().run();
               else chain.setLink({ href }).run();
               setLinkMode(false);
+              refocus(editor);
             }}
             onRemove={() => {
-              editor.chain().focus().extendMarkRange("link").unsetLink().run();
+              editor.chain().extendMarkRange("link").unsetLink().run();
               setLinkMode(false);
+              refocus(editor);
             }}
           />
         ) : (
@@ -209,7 +220,10 @@ export function BubbleToolbar({ editor, linkMode, setLinkMode }: BubbleToolbarPr
               label="Bold"
               shortcut={`${mod}+B`}
               active={state.bold}
-              onClick={() => editor.chain().focus().toggleBold().run()}
+              onClick={() => {
+                editor.chain().toggleBold().run();
+                refocus(editor);
+              }}
             >
               <Bold {...iconProps} />
             </ToolbarButton>
@@ -217,7 +231,10 @@ export function BubbleToolbar({ editor, linkMode, setLinkMode }: BubbleToolbarPr
               label="Italic"
               shortcut={`${mod}+I`}
               active={state.italic}
-              onClick={() => editor.chain().focus().toggleItalic().run()}
+              onClick={() => {
+                editor.chain().toggleItalic().run();
+                refocus(editor);
+              }}
             >
               <Italic {...iconProps} />
             </ToolbarButton>
@@ -225,7 +242,10 @@ export function BubbleToolbar({ editor, linkMode, setLinkMode }: BubbleToolbarPr
               label="Strikethrough"
               shortcut={`${mod}+Shift+S`}
               active={state.strike}
-              onClick={() => editor.chain().focus().toggleStrike().run()}
+              onClick={() => {
+                editor.chain().toggleStrike().run();
+                refocus(editor);
+              }}
             >
               <Strikethrough {...iconProps} />
             </ToolbarButton>
@@ -233,7 +253,10 @@ export function BubbleToolbar({ editor, linkMode, setLinkMode }: BubbleToolbarPr
               label="Inline code"
               shortcut={`${mod}+E`}
               active={state.code}
-              onClick={() => editor.chain().focus().toggleCode().run()}
+              onClick={() => {
+                editor.chain().toggleCode().run();
+                refocus(editor);
+              }}
             >
               <Code {...iconProps} />
             </ToolbarButton>

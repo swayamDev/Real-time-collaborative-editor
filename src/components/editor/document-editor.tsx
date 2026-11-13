@@ -23,6 +23,18 @@ function focusBodyStart(editor: Editor): void {
   view.focus();
 }
 
+// Module-level so its identity never changes. useEditor compares options on
+// every render and resets the view's props when they differ, which can drop
+// a selection change the browser has made but ProseMirror has not read yet.
+const EDITOR_PROPS = {
+  attributes: {
+    "aria-label": "Document body",
+    "aria-multiline": "true",
+    "data-testid": "editor",
+    spellcheck: "true",
+  },
+};
+
 interface DocumentEditorProps {
   id: string;
   initialTitle: string;
@@ -81,14 +93,7 @@ export function DocumentEditor({ id, initialTitle, initialUpdatedAt, initialStat
   const editor = useEditor({
     immediatelyRender: false,
     extensions,
-    editorProps: {
-      attributes: {
-        "aria-label": "Document body",
-        "aria-multiline": "true",
-        "data-testid": "editor",
-        spellcheck: "true",
-      },
-    },
+    editorProps: EDITOR_PROPS,
     onSelectionUpdate: () => setLinkMode(false),
   });
 
