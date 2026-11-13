@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { createContext, useContext } from "react";
 import { displayTitle } from "@/lib/title";
 import { TopBar } from "../top-bar";
+import { SyncStatus } from "./sync-status";
 
 interface SkeletonInfo {
   title: string;
@@ -22,7 +23,7 @@ function EditorSkeleton() {
   const empty = title.trim() === "";
   return (
     <>
-      <TopBar title={displayTitle(title)} titleMuted={empty} />
+      <TopBar title={displayTitle(title)} titleMuted={empty} status={<SyncStatus status="connecting" />} />
       <main id="main" className="flex-1 overflow-y-auto" aria-busy="true">
         <article className="doc-column pt-14 sm:pt-24">
           <h1 className={empty ? "doc-title text-ink-muted" : "doc-title"} data-testid="title-skeleton">

@@ -1,5 +1,5 @@
 import "server-only";
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { documents } from "@/db/schema";
 import { emptyYjsState } from "@/lib/empty-yjs-state";
@@ -60,35 +60,5 @@ export async function deleteDocument(id: string, beforeCommit: () => Promise<voi
     if (rows.length === 0) return false;
     await beforeCommit();
     return true;
-  });
-}
-
-/**
- * Merge a client update into the stored state.
- *
- * The row is locked for the duration of the read-merge-write so concurrent
- * saves (two tabs today, two people in Phase 2) never overwrite each other.
- * Returns the new `updatedAt`, or null when the document does not exist.
- */
-export async function applyDocumentUpdate(
-  id: string,
-  update: Uint8Array,
-  // Passed in by the route handler so this shared module never imports Yjs.
-  merge: (stored: Uint8Array, incoming: Uint8Array) => Uint8Array,
-): Promise<string | null> {
-  return db().transaction(async (tx) => {
-    const [row] = await tx
-      .select({ state: documents.yjsState })
-      .from(documents)
-      .where(eq(documents.id, id))
-      .for("update");
-    if (!row) return null;
-
-    const [saved] = await tx
-      .update(documents)
-      .set({ yjsState: merge(row.state, update), updatedAt: sql`now()` })
-      .where(eq(documents.id, id))
-      .returning({ updatedAt: documents.updatedAt });
-    return saved.updatedAt.toISOString();
   });
 }

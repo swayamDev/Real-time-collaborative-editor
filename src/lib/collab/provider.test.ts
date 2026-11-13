@@ -128,6 +128,8 @@ describe("SyncProvider", () => {
     socket().receive(encodeAck(1)); // the handshake Step 2
     const acked = vi.fn();
     provider.onAllAcked(acked);
+    socket().receive(encodeAck(1));
+    expect(acked).not.toHaveBeenCalled(); // the handshake alone is not an edit
 
     doc.getText("body").insert(0, "hi");
     expect(socket().sentOf("update")).toHaveLength(1);

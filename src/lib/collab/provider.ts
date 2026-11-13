@@ -104,6 +104,8 @@ export class SyncProvider {
   private sentStep2 = false;
   /** Local edits made while not connected; delivered by the next Step 2. */
   private offlineEdits = false;
+  /** Local edits sent since the last time everything was acknowledged. */
+  private editsAwaitingAck = false;
 
   private readonly unsubscribeConnectivity: () => void;
 
@@ -127,7 +129,7 @@ export class SyncProvider {
     return () => this.listeners.delete(listener);
   }
 
-  /** Called when the server has acknowledged every local edit. */
+  /** Called when the server has acknowledged local edits (not just the handshake). */
   onAllAcked(listener: Listener): () => void {
     this.ackListeners.add(listener);
     return () => this.ackListeners.delete(listener);
@@ -268,8 +270,10 @@ export class SyncProvider {
         if (this.acked >= this.sent) {
           this.oldestUnackedAt = null;
           this.clearSavingTimer();
+          const hadEdits = this.editsAwaitingAck || (this.offlineEdits && this.sentStep2);
           if (this.sentStep2) this.offlineEdits = false;
-          this.ackListeners.forEach((listener) => listener());
+          this.editsAwaitingAck = false;
+          if (hadEdits) this.ackListeners.forEach((listener) => listener());
         }
         break;
     }
@@ -294,6 +298,7 @@ export class SyncProvider {
     if (origin === this) return; // Came from the server.
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.sendDocumentMessage(encodeUpdate(update));
+      this.editsAwaitingAck = true;
     } else {
       this.offlineEdits = true;
     }
