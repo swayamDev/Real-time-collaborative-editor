@@ -185,11 +185,12 @@ test.describe("when the sync server goes down", () => {
     await expectText(c, merged);
   });
 
-  test("sidebar rename and delete fail clearly and keep the old state", async ({ page }) => {
+  test("rename fails clearly, while delete still succeeds through the tombstone", async ({ page }) => {
     await createDocument(page);
     const title = uniqueTitle("Keep me");
     await page.getByTestId("title").fill(title);
     await expectSaved(page);
+    const url = page.url();
     const row = sidebarRow(page, title);
     await expect(row).toBeVisible();
 
@@ -204,17 +205,20 @@ test.describe("when the sync server goes down", () => {
     await expect(row.getByRole("alert")).toHaveText("Couldn't rename. Try again.");
     await expect(row).toContainText(title);
 
+    // The tombstone commits in Postgres; the room cleanup is deferred.
     await row.hover();
     await row.getByRole("button", { name: `Actions for ${title}` }).click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
     const dialog = page.getByRole("dialog", { name: `Delete "${title}"?` });
     await dialog.getByRole("button", { name: "Delete" }).click();
-    await expect(dialog.getByRole("alert")).toHaveText("Couldn't delete. Try again.");
-    await dialog.getByRole("button", { name: "Cancel" }).click();
-    await expect(sidebarRow(page, title)).toBeVisible();
+    await expect(dialog).toBeHidden();
+    await expect(sidebarRow(page, title)).toHaveCount(0);
 
+    // When the sync server returns, the room sees the tombstone and erases itself.
     await startSyncServer();
-    await page.reload();
-    await expect(sidebarRow(page, title)).toBeVisible();
+    await page.goto(url);
+    await expect(page.getByTestId("document-gone")).toContainText("This document was deleted.");
+    await page.goto("/");
+    await expect(sidebarRow(page, title)).toHaveCount(0);
   });
 });

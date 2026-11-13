@@ -420,3 +420,52 @@ describe("internal API", () => {
     expect(again.closed?.code).toBe(4410);
   });
 });
+
+describe("tombstones", () => {
+  it("closes with 4410 and stores nothing when the row is tombstoned before first load", async () => {
+    const id = seed("Gone");
+    memoryStore.rows.get(id)!.deleted = true;
+    const client = await TestClient.connect(id);
+    await client.until(() => client.closed !== null, "closed");
+    expect(client.closed?.code).toBe(4410);
+    await runInDurableObject(stubFor(id), (_instance, state) => {
+      const tables = state.storage.sql
+        .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '_cf_%'")
+        .toArray();
+      expect(tables).toEqual([]);
+    });
+  });
+
+  it("erases itself on the next connection when cleanup never reached it", async () => {
+    const id = seed();
+    const a = await joined(id);
+    a.edit((doc) => doc.getText("body").insert(0, "before delete"));
+    await a.until(() => a.last("ack")!.count >= 2, "stored");
+    a.close();
+    await a.until(() => a.closed !== null, "closed");
+
+    // Tombstone in Postgres; the sync server cleanup call was never made.
+    memoryStore.rows.get(id)!.deleted = true;
+    await evictDurableObject(stubFor(id));
+
+    const late = await TestClient.connect(id);
+    await late.until(() => late.closed !== null, "rejected");
+    expect(late.closed?.code).toBe(4410);
+  });
+
+  it("does not snapshot into a tombstoned row, and deletes the room instead", async () => {
+    const id = seed();
+    const a = await joined(id);
+    a.edit((doc) => doc.getText("body").insert(0, "late edit"));
+    await a.until(() => a.last("ack")!.count >= 2, "stored");
+    const before = memoryStore.rows.get(id)!.state;
+    const savesBefore = memoryStore.saves;
+    memoryStore.rows.get(id)!.deleted = true;
+    a.close();
+    await a.until(() => a.closed !== null, "closed");
+    await waitUntil(() => memoryStore.saves > savesBefore, 3_000, "snapshot attempt");
+    // The room deleted itself, so it no longer holds an alarm.
+    expect(await runInDurableObject(stubFor(id), (_instance, state) => state.storage.getAlarm())).toBeNull();
+    expect(memoryStore.rows.get(id)!.state).toBe(before);
+  });
+});

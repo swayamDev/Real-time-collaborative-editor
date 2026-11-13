@@ -29,6 +29,7 @@ export default async function DocumentPage({ params }: PageProps<"/d/[id]">) {
       initialTitle={document.title}
       initialUpdatedAt={document.updatedAt}
       initialState={bytesToBase64(document.state)}
+      deleted={document.deleted}
     />
   );
 }

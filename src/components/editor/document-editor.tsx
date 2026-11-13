@@ -45,9 +45,25 @@ interface DocumentEditorProps {
   initialUpdatedAt: string;
   /** Base64 of the Postgres snapshot, shown while the sync server connects. */
   initialState: string;
+  /** The row is tombstoned. */
+  deleted: boolean;
 }
 
-export function DocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }: DocumentEditorProps) {
+export function DocumentEditor(props: DocumentEditorProps) {
+  if (props.deleted) {
+    return (
+      <>
+        <TopBar title={displayTitle(props.initialTitle)} titleMuted />
+        <main id="main" className="flex-1 overflow-y-auto">
+          <DocumentGone reason="deleted" />
+        </main>
+      </>
+    );
+  }
+  return <LiveDocumentEditor {...props} />;
+}
+
+function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }: DocumentEditorProps) {
   const { setTitle, touch, ensure, remove } = useDocuments();
 
   useEffect(() => {

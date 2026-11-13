@@ -13,22 +13,27 @@ export interface DocumentRecord {
   title: string;
 }
 
+/** A row as loaded: a live document, or a tombstone. */
+export type LoadedDocument = (DocumentRecord & { deleted: false }) | { deleted: true };
+
 export interface SnapshotStore {
-  /** Null when the document does not exist (never created, or deleted). */
-  load(documentId: string): Promise<DocumentRecord | null>;
-  /** Returns false when the row no longer exists. */
+  /** Null when there is no row; a tombstone when the document was deleted. */
+  load(documentId: string): Promise<LoadedDocument | null>;
+  /** Returns false when the row is gone or tombstoned. */
   save(documentId: string, record: DocumentRecord): Promise<boolean>;
 }
 
 /** In-memory store, selected with DATABASE_URL=memory: (tests). */
 export class MemorySnapshotStore implements SnapshotStore {
-  readonly rows = new Map<string, DocumentRecord>();
+  readonly rows = new Map<string, DocumentRecord & { deleted?: boolean }>();
   saves = 0;
   failNextSave = false;
 
-  async load(documentId: string): Promise<DocumentRecord | null> {
+  async load(documentId: string): Promise<LoadedDocument | null> {
     const row = this.rows.get(documentId);
-    return row ? { state: row.state.slice(), title: row.title } : null;
+    if (!row) return null;
+    if (row.deleted) return { deleted: true };
+    return { state: row.state.slice(), title: row.title, deleted: false };
   }
 
   async save(documentId: string, record: DocumentRecord): Promise<boolean> {
@@ -37,7 +42,7 @@ export class MemorySnapshotStore implements SnapshotStore {
       throw new Error("Simulated database failure");
     }
     this.saves += 1;
-    if (!this.rows.has(documentId)) return false;
+    if (!this.rows.has(documentId) || this.rows.get(documentId)!.deleted) return false;
     this.rows.set(documentId, { state: record.state.slice(), title: record.title });
     return true;
   }
@@ -74,21 +79,23 @@ export class PostgresSnapshotStore implements SnapshotStore {
     }
   }
 
-  load(documentId: string): Promise<DocumentRecord | null> {
+  load(documentId: string): Promise<LoadedDocument | null> {
     return this.withClient(async (client) => {
-      const result = await client.query<{ yjs_state: Buffer; title: string }>(
-        "SELECT yjs_state, title FROM documents WHERE id = $1",
+      const result = await client.query<{ yjs_state: Buffer; title: string; deleted: boolean }>(
+        "SELECT yjs_state, title, deleted_at IS NOT NULL AS deleted FROM documents WHERE id = $1",
         [documentId],
       );
       const row = result.rows[0];
-      return row ? { state: new Uint8Array(row.yjs_state), title: row.title } : null;
+      if (!row) return null;
+      if (row.deleted) return { deleted: true };
+      return { state: new Uint8Array(row.yjs_state), title: row.title, deleted: false };
     });
   }
 
   save(documentId: string, record: DocumentRecord): Promise<boolean> {
     return this.withClient(async (client) => {
       const result = await client.query(
-        "UPDATE documents SET yjs_state = $2, title = $3, updated_at = now() WHERE id = $1",
+        "UPDATE documents SET yjs_state = $2, title = $3, updated_at = now() WHERE id = $1 AND deleted_at IS NULL",
         [documentId, Buffer.from(record.state), record.title],
       );
       return (result.rowCount ?? 0) > 0;

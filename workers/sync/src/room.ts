@@ -68,6 +68,7 @@ export class DocumentRoom extends DurableObject<Env> {
   private alarmSetFor: number | null = null;
   /** Snapshot without waiting for typing to pause (room emptied, rename). */
   private snapshotUrgent = false;
+  private tombstoneChecked = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -224,9 +225,26 @@ export class DocumentRoom extends DurableObject<Env> {
 
   // Loading
 
+  /**
+   * A room that already holds the document checks Postgres once per
+   * instance, on its first connection. If a delete tombstoned the row but
+   * could not reach this room, the room erases itself here.
+   */
+  private async checkTombstone(documentId: string): Promise<boolean> {
+    if (this.tombstoneChecked) return false;
+    this.tombstoneChecked = true;
+    const record = await this.store.load(documentId);
+    if (record && !record.deleted) return false;
+    await this.deleteRoom();
+    return true;
+  }
+
   private async ensureLoaded(documentId: string): Promise<LoadResult> {
     if (this.deleted) return "deleted";
-    if (this.doc) return this.storage.documentId() === documentId ? "ok" : "not-found";
+    if (this.doc) {
+      if (this.storage.documentId() !== documentId) return "not-found";
+      return (await this.checkTombstone(documentId)) ? "deleted" : "ok";
+    }
 
     let result: LoadResult = "not-found";
     // Hold other events until the first load finishes, so no message sees a
@@ -237,7 +255,13 @@ export class DocumentRoom extends DurableObject<Env> {
         return;
       }
       const record = await this.store.load(documentId);
+      this.tombstoneChecked = true;
       if (!record) return;
+      if (record.deleted) {
+        await this.deleteRoom();
+        result = "deleted";
+        return;
+      }
 
       const doc = this.buildDoc([record.state]);
       // Phase 1 documents have their title only in the Postgres column.

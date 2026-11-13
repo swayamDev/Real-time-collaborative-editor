@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { customType, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /** Postgres bytea, exposed to the app as a Uint8Array (what Yjs works with). */
@@ -28,8 +29,17 @@ export const documents = pgTable(
     yjsState: bytea("yjs_state").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Tombstone. Set first when a document is deleted, so every reader (the
+     * list, the page, the sync server, clients returning from offline) sees
+     * the deletion even if a later cleanup step fails. Kept until accounts
+     * arrive with a purge policy.
+     */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
-  (table) => [index("documents_updated_at_idx").on(table.updatedAt.desc())],
+  (table) => [
+    index("documents_live_updated_at_idx").on(table.updatedAt.desc()).where(sql`${table.deletedAt} IS NULL`),
+  ],
 );
 
 export type DocumentRow = typeof documents.$inferSelect;

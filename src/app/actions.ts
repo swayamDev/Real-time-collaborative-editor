@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { DELETE_FAILED, RENAME_FAILED } from "@/lib/copy";
 import { isDocumentId } from "@/lib/ids";
 import { validateTitle } from "@/lib/title";
-import { type DocumentSummary, createDocument, deleteDocument } from "@/server/documents";
+import { type DocumentSummary, createDocument, tombstoneDocument } from "@/server/documents";
 import { SyncRequestError, deleteInSync, renameInSync } from "@/server/sync";
 
 export type ActionResult<T = undefined> = { ok: true; value: T } | { ok: false; error: string };
@@ -42,13 +42,27 @@ export async function renameDocumentAction(
 }
 
 /** Delete the row and the live copy together; if either fails, keep both. */
+/**
+ * Delete in an order where any failure leaves a consistent state:
+ *
+ * 1. Tombstone the row. Once this commits, the document is deleted for the
+ *    list, the page, the sync server and clients returning from offline.
+ * 2. Ask the sync server to close sockets and erase the room. Best effort:
+ *    if it fails, the room erases itself the next time anything reaches it,
+ *    because loads and snapshots check the tombstone.
+ */
 export async function deleteDocumentAction(id: string): Promise<ActionResult> {
   if (!isDocumentId(id)) return { ok: false, error: "This document doesn't exist." };
   try {
-    await deleteDocument(id, () => deleteInSync(id));
+    await tombstoneDocument(id);
   } catch (error) {
     console.error("Delete failed", error);
     return { ok: false, error: DELETE_FAILED };
+  }
+  try {
+    await deleteInSync(id);
+  } catch (error) {
+    console.warn("Sync server cleanup deferred; the room will erase itself on next contact", error);
   }
   revalidatePath("/", "layout");
   return { ok: true, value: undefined };

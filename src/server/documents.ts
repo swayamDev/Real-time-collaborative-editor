@@ -1,5 +1,5 @@
 import "server-only";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { documents } from "@/db/schema";
 import { emptyYjsState } from "@/lib/empty-yjs-state";
@@ -13,6 +13,7 @@ export interface DocumentSummary {
 
 export interface DocumentWithState extends DocumentSummary {
   state: Uint8Array;
+  deleted: boolean;
 }
 
 const summaryColumns = {
@@ -29,16 +30,17 @@ export async function listDocuments(): Promise<DocumentSummary[]> {
   const rows = await db()
     .select(summaryColumns)
     .from(documents)
+    .where(isNull(documents.deletedAt))
     .orderBy(desc(documents.updatedAt), desc(documents.id));
   return rows.map(toSummary);
 }
 
 export async function getDocument(id: string): Promise<DocumentWithState | null> {
   const [row] = await db()
-    .select({ ...summaryColumns, state: documents.yjsState })
+    .select({ ...summaryColumns, state: documents.yjsState, deletedAt: documents.deletedAt })
     .from(documents)
     .where(eq(documents.id, id));
-  return row ? { ...toSummary(row), state: row.state } : null;
+  return row ? { ...toSummary(row), state: row.state, deleted: row.deletedAt !== null } : null;
 }
 
 export async function createDocument(): Promise<DocumentSummary> {
@@ -50,15 +52,15 @@ export async function createDocument(): Promise<DocumentSummary> {
 }
 
 /**
- * Delete the row, but only commit if `beforeCommit` succeeds. The delete
- * holds the row while the sync server erases its live copy; if that call
- * fails, the transaction rolls back and nothing changes.
+ * Step one of a delete: write the tombstone. From this commit on the
+ * document is deleted for every reader. Returns false if it did not exist
+ * or was already deleted.
  */
-export async function deleteDocument(id: string, beforeCommit: () => Promise<void>): Promise<boolean> {
-  return db().transaction(async (tx) => {
-    const rows = await tx.delete(documents).where(eq(documents.id, id)).returning({ id: documents.id });
-    if (rows.length === 0) return false;
-    await beforeCommit();
-    return true;
-  });
+export async function tombstoneDocument(id: string): Promise<boolean> {
+  const rows = await db()
+    .update(documents)
+    .set({ deletedAt: sql`now()` })
+    .where(and(eq(documents.id, id), isNull(documents.deletedAt)))
+    .returning({ id: documents.id });
+  return rows.length > 0;
 }

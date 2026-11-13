@@ -9,7 +9,7 @@ export function DocumentGone({ reason }: { reason: "deleted" | "not-found" }) {
       </h1>
       <p className="mt-2 text-[19px] leading-[1.65] text-ink-muted">
         {reason === "deleted"
-          ? "It was deleted while you had it open."
+          ? "It was deleted and no longer syncs."
           : "It may have been deleted, or the link is wrong."}
       </p>
       <Link
