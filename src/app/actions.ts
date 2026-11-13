@@ -25,9 +25,12 @@ export async function createDocumentCopyAction(rawTitle: string): Promise<Action
   const result = validateTitle(rawTitle);
   const title = result.ok ? result.title : "";
   try {
-    const document = await createDocument(title);
+    // The column stays empty: the copied content already carries the shared
+    // title, and a non-empty column would make the sync server seed a
+    // second copy of it. The first snapshot fills the column.
+    const document = await createDocument();
     revalidatePath("/", "layout");
-    return { ok: true, value: document };
+    return { ok: true, value: { ...document, title } };
   } catch (error) {
     console.error("Create failed", error);
     return { ok: false, error: SAVE_COPY_FAILED };
