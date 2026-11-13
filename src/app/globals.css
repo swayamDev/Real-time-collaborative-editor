@@ -282,6 +282,11 @@ dialog[open].dialog-fade::backdrop {
   }
 }
 
+/* The caret marks focus in the title, as it does in the body. */
+textarea.doc-title:focus-visible {
+  outline: none;
+}
+
 .doc-title.is-quiet {
   font-size: 30px;
   line-height: 1.2;
