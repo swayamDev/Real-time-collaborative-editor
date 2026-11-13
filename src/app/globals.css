@@ -468,8 +468,8 @@ dialog[open].dialog-fade::backdrop {
 .doc-prose ul[data-type="taskList"] li > label {
   flex: none;
   user-select: none;
-  /* Center a 1em box on the first line (line-height 1.65em). */
-  margin-top: 0.32em;
+  /* Center the box on the first line (line-height 1.65em). */
+  margin-top: 0.35em;
   display: flex;
 }
 
@@ -479,11 +479,35 @@ dialog[open].dialog-fade::backdrop {
 }
 
 .doc-prose ul[data-type="taskList"] input[type="checkbox"] {
-  width: 1em;
-  height: 1em;
-  accent-color: var(--indigo);
-  cursor: pointer;
+  appearance: none;
+  display: grid;
+  place-content: center;
+  width: 0.95em;
+  height: 0.95em;
   margin: 0;
+  border: 1.5px solid var(--slate);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 100ms, border-color 100ms;
+}
+
+.doc-prose ul[data-type="taskList"] input[type="checkbox"]:hover {
+  border-color: var(--indigo);
+}
+
+.doc-prose ul[data-type="taskList"] input[type="checkbox"]:checked {
+  background: var(--indigo);
+  border-color: var(--indigo);
+}
+
+.doc-prose ul[data-type="taskList"] input[type="checkbox"]:checked::before {
+  content: "";
+  width: 0.62em;
+  height: 0.62em;
+  background: var(--on-indigo);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3.2 3L13 4.5' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
 }
 
 .doc-prose ul[data-type="taskList"] li[data-checked="true"] > div {
