@@ -32,3 +32,16 @@ export function sidebarRow(page: Page, title: string) {
 }
 
 export const mod = process.platform === "darwin" ? "Meta" : "Control";
+
+/**
+ * Wait until the editor's own selection covers `text`. ProseMirror learns
+ * about keyboard selection changes from the asynchronous selectionchange
+ * event, a few milliseconds after the keys are pressed.
+ */
+export async function waitForEditorSelection(page: Page, text: string): Promise<void> {
+  await page.waitForFunction((expected) => {
+    const root = document.querySelector(".ProseMirror") as (Element & { editor?: { state: { selection: { from: number; to: number }; doc: { textBetween: (from: number, to: number) => string } } } }) | null;
+    const state = root?.editor?.state;
+    return state ? state.doc.textBetween(state.selection.from, state.selection.to) === expected : false;
+  }, text);
+}

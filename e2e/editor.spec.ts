@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createDocument, expectSaved, mod, setTitle, uniqueTitle } from "./helpers";
+import { createDocument, expectSaved, mod, setTitle, uniqueTitle, waitForEditorSelection } from "./helpers";
 
 test("formatted content typed with markdown shortcuts persists after reload", async ({ page }) => {
   await createDocument(page);
@@ -61,12 +61,8 @@ test("floating toolbar formats a selection and adds a link", async ({ page }) =>
   const toolbar = page.getByTestId("bubble-toolbar");
   await expect(toolbar).toBeHidden();
 
-  // Select the first word.
-  await page.keyboard.press("Home");
-  await page.keyboard.press("Shift+End");
-  for (let i = 0; i < "this bold and link here".length + 1; i++) {
-    await page.keyboard.press("Shift+ArrowLeft");
-  }
+  // Double-click selects the first word.
+  await page.getByTestId("editor").locator("p").first().dblclick({ position: { x: 8, y: 12 } });
   await expect(toolbar).toBeVisible();
   await toolbar.getByRole("button", { name: "Bold" }).click();
   await expect(page.getByTestId("editor").locator("strong")).toHaveText("Make");
@@ -77,6 +73,7 @@ test("floating toolbar formats a selection and adds a link", async ({ page }) =>
   for (let i = 0; i < "here".length; i++) {
     await page.keyboard.press("Shift+ArrowLeft");
   }
+  await waitForEditorSelection(page, "here");
   await page.keyboard.press(`${mod}+k`);
   const field = toolbar.getByRole("textbox", { name: "Link address" });
   await expect(field).toBeFocused();
@@ -97,6 +94,7 @@ test("block type menu turns a paragraph into a heading", async ({ page }) => {
   await page.getByTestId("title").press("Enter");
   await page.keyboard.type("Promote me");
   await page.keyboard.press("Shift+Home");
+  await waitForEditorSelection(page, "Promote me");
 
   const toolbar = page.getByTestId("bubble-toolbar");
   await toolbar.getByRole("button", { name: "Block type: Text" }).click();
