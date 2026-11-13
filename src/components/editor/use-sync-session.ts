@@ -3,6 +3,9 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
+import { preferredColor } from "@brahma/protocol";
+import { readGuestIdentity } from "@/lib/collab/identity";
+import { syncOwnColor } from "@/lib/collab/presence";
 import { SyncProvider, type SyncStatus } from "@/lib/collab/provider";
 import { syncUrl } from "@/lib/collab/sync-url";
 
@@ -21,11 +24,19 @@ export function useSyncSession(documentId: string, doc: Y.Doc): SyncSession | nu
 
   useEffect(() => {
     const awareness = new Awareness(doc);
+    // Publish who we are before connecting, so the first presence message
+    // the server relays already carries a name and color.
+    const { guestId, name } = readGuestIdentity();
+    awareness.setLocalStateField("user", { name, guestId, joinedAt: Date.now(), color: preferredColor(guestId) });
+    const onPresenceChange = () => syncOwnColor(awareness);
+    awareness.on("change", onPresenceChange);
+
     const provider = new SyncProvider({ url: syncUrl(documentId), doc, awareness });
     // Connecting to an external system is what effects are for.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSession({ provider, awareness });
     return () => {
+      awareness.off("change", onPresenceChange);
       provider.destroy();
       awareness.destroy();
     };

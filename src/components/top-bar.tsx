@@ -10,9 +10,10 @@ interface TopBarProps {
   title?: string;
   titleMuted?: boolean;
   status?: React.ReactNode;
+  presence?: React.ReactNode;
 }
 
-export function TopBar({ title, titleMuted, status }: TopBarProps) {
+export function TopBar({ title, titleMuted, status, presence }: TopBarProps) {
   const { sidebarCollapsed, toggleSidebar, openDrawer } = useShell();
 
   return (
@@ -47,6 +48,7 @@ export function TopBar({ title, titleMuted, status }: TopBarProps) {
       </nav>
 
       {status}
+      {presence}
       <ThemeToggle />
     </header>
   );

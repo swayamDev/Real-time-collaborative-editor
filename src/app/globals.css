@@ -534,6 +534,57 @@ textarea.doc-title:focus-visible {
   pointer-events: none;
 }
 
+/* Collaborator carets: a 2px bar in the collaborator color with a name flag
+   that shows while they are active and fades after three seconds. */
+.collab-caret {
+  position: relative;
+  margin-inline: -1px;
+  border-left: 2px solid var(--caret-color);
+  word-break: normal;
+}
+
+/* A slightly wider hover target than the 2px bar. */
+.collab-caret::before {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+
+.collab-caret:hover .collab-caret-label {
+  animation: none;
+  opacity: 1;
+}
+
+.collab-caret-label {
+  position: absolute;
+  bottom: 100%;
+  left: -2px;
+  padding: 1px 6px;
+  border-radius: 4px 4px 4px 0;
+  background: var(--caret-color);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  font-style: normal;
+  line-height: 16px;
+  letter-spacing: 0;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+  /* Reduced motion keeps the delay and drops the fade. */
+  animation: caret-flag-out 400ms ease-out 3s forwards;
+}
+
+@keyframes caret-flag-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.collab-selection {
+  border-radius: 1px;
+}
+
 .doc-prose .ProseMirror-gapcursor::after {
   border-top-color: var(--ink);
 }

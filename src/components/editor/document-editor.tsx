@@ -11,6 +11,7 @@ import { useDocuments } from "../app-shell";
 import { TopBar } from "../top-bar";
 import { BubbleToolbar } from "./bubble-toolbar";
 import { DocumentGone } from "./document-gone";
+import { PresenceBar } from "./presence-bar";
 import { buildExtensions } from "./extensions";
 import { SharedTitleField } from "./shared-title-field";
 import { SyncStatus } from "./sync-status";
@@ -112,6 +113,7 @@ export function DocumentEditor({ id, initialTitle, initialUpdatedAt, initialStat
         title={displayTitle(shownTitle)}
         titleMuted={shownTitle.trim() === ""}
         status={<SyncStatus status={status} />}
+        presence={session && <PresenceBar awareness={session.awareness} />}
       />
       <main id="main" className="flex-1 overflow-y-auto" data-testid="document-scroll">
         <article className="doc-column pt-14 sm:pt-24">
@@ -139,6 +141,7 @@ export function DocumentEditor({ id, initialTitle, initialUpdatedAt, initialStat
 
 function CollaborativeBody({
   doc,
+  session,
   editorRef,
   titleRef,
 }: {
@@ -153,7 +156,7 @@ function CollaborativeBody({
       onRequestLink: () => setLinkMode(true),
       onFocusToolbar: () =>
         document.querySelector<HTMLButtonElement>('[data-testid="bubble-toolbar"] button')?.focus(),
-    }),
+    }, session.awareness),
   );
 
   const editor = useEditor({
