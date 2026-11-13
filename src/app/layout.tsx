@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
 import { AppShell } from "@/components/app-shell";
+import { ServiceWorkerRegistration } from "@/components/service-worker";
 import { SIDEBAR_COOKIE, THEME_COOKIE, parseSidebarCollapsed, parseTheme } from "@/lib/preferences";
 import { listDocuments } from "@/server/documents";
 import { codeFont, documentFont, uiFont } from "./fonts";
@@ -31,6 +32,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <AppShell documents={documents} initialTheme={theme} initialSidebarCollapsed={sidebarCollapsed}>
           {children}
         </AppShell>
+        <ServiceWorkerRegistration />
       </body>
     </html>
   );

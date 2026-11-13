@@ -176,6 +176,8 @@ export class SyncProvider {
     );
     awareness.on("update", this.onAwarenessUpdate);
     this.connect();
+    // connect() returns early when offline or halted; compute the real status either way.
+    this.updateStatus();
   }
 
   // Public API

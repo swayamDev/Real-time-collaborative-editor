@@ -9,6 +9,7 @@ import { downloadFile, documentHtml, exportFileName } from "@/lib/collab/export-
 import { STORAGE_FULL, SYNC_HALTED, TOO_LARGE_TO_ADD } from "@/lib/copy";
 import { displayTitle } from "@/lib/title";
 import { useDocuments } from "../app-shell";
+import { cachePageForOffline } from "../service-worker";
 import { TopBar } from "../top-bar";
 import { BubbleToolbar } from "./bubble-toolbar";
 import { DocumentBanner } from "./document-banner";
@@ -78,6 +79,8 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }
 
   useEffect(() => {
     ensure({ id, title: initialTitle, updatedAt: initialUpdatedAt });
+    // Keep this page for offline use, even when it was reached by a client-side navigation.
+    cachePageForOffline(`/d/${id}`);
   }, [ensure, id, initialTitle, initialUpdatedAt]);
 
   // The Y.Doc opens from this device first, then the page's Postgres

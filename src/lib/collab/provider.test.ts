@@ -238,6 +238,8 @@ describe("offline", () => {
   it("keeps edits on the device while offline and syncs them when back", async () => {
     online = false;
     const tab = await openTab();
+    // Offline from the start: never "Connecting".
+    expect(tab.provider.getStatus()).toBe("saved-on-device");
     type(tab.local, "written offline");
     await until(async () => (await pendingCount()) === 1, "stored on device");
     expect(tab.provider.getStatus()).toBe("saved-on-device");

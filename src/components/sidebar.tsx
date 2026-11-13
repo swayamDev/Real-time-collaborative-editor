@@ -23,6 +23,17 @@ export function Sidebar({ variant }: { variant: "docked" | "drawer" }) {
   const { documents, remove } = useDocuments();
   const online = useOnline();
   const onDevice = useDeviceDocuments();
+  // Offline, the server list may be a stale cached copy: add documents that
+  // only this device knows about, so everything openable offline is listed.
+  const listed = online
+    ? documents
+    : [
+        ...documents,
+        ...[...onDevice.values()]
+          .filter((meta) => !documents.some((document) => document.id === meta.id))
+          .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
+          .map((meta) => ({ id: meta.id, title: meta.title, updatedAt: new Date(meta.lastOpenedAt).toISOString() })),
+      ];
   const { toggleSidebar, closeDrawer } = useShell();
   const pathname = usePathname();
   const router = useRouter();
@@ -74,11 +85,11 @@ export function Sidebar({ variant }: { variant: "docked" | "drawer" }) {
       </div>
 
       <nav aria-label="Documents" className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-        {documents.length === 0 ? (
+        {listed.length === 0 ? (
           <p className="px-2 py-1.5 text-ui-sm text-ink-muted">No documents yet.</p>
         ) : (
           <ul className="flex flex-col gap-px" data-testid={`document-list-${variant}`}>
-            {documents.map((document) => (
+            {listed.map((document) => (
               <DocumentRow
                 key={document.id}
                 document={document}
