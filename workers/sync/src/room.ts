@@ -1,0 +1,312 @@
+import {
+  CLOSE_DELETED,
+  CLOSE_MALFORMED,
+  CLOSE_NOT_FOUND,
+  CLOSE_TOO_LARGE,
+  MAX_MESSAGE_BYTES,
+  type Message,
+  ProtocolError,
+  TITLE_FIELD,
+  decodeMessage,
+  encodeAck,
+  encodeAwareness,
+  encodeQueryAwareness,
+  encodeSyncStep1,
+  encodeSyncStep2,
+  encodeUpdate,
+} from "@brahma/protocol";
+import { DurableObject } from "cloudflare:workers";
+import * as Y from "yjs";
+import { AwarenessRegistry } from "./awareness-registry";
+import { RoomStorage } from "./storage";
+import { type SnapshotStore, createSnapshotStore } from "./store";
+
+/** How long incoming updates are coalesced before one storage write and one ack. */
+export const BATCH_MS = 150;
+/** Compact the update log into the snapshot after this many batches. */
+export const COMPACT_AFTER_BATCHES = 100;
+
+/** Per-socket state that must survive hibernation. Kept small (2 KB limit). */
+interface Attachment {
+  /** Document messages (Step 2 and Update) received on this socket. */
+  received: number;
+  /** Awareness client ids announced on this socket, removed when it closes. */
+  awarenessIds: number[];
+}
+
+type LoadResult = "ok" | "not-found" | "deleted";
+
+/**
+ * One Durable Object per document, and the only writer of that document.
+ *
+ * Uses the hibernatable WebSocket API: the runtime keeps sockets open while
+ * the object is evicted from memory, and calls webSocketMessage on a fresh
+ * instance when a message arrives. The constructor rebuilds the Y.Doc from
+ * storage; presence is rebuilt by asking clients to resend it.
+ */
+export class DocumentRoom extends DurableObject<Env> {
+  private readonly storage: RoomStorage;
+  private readonly store: SnapshotStore;
+  private readonly awareness = new AwarenessRegistry();
+  private doc: Y.Doc | null = null;
+  private deleted = false;
+  private awarenessQueried = false;
+
+  private pendingUpdates: Uint8Array[] = [];
+  private pendingAcks = new Set<WebSocket>();
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.storage = new RoomStorage(ctx.storage.sql);
+    this.store = createSnapshotStore(env);
+    // SQLite reads are synchronous, so an initialized room is ready at once.
+    if (this.storage.isInitialized()) {
+      this.attachDoc(this.buildDoc(this.storage.loadUpdates()));
+    }
+  }
+
+  // Connections
+
+  async fetch(request: Request): Promise<Response> {
+    const documentId = new URL(request.url).pathname.split("/")[2]?.toLowerCase() ?? "";
+    const pair = new WebSocketPair();
+    const [client, server] = [pair[0], pair[1]];
+
+    const result = await this.ensureLoaded(documentId);
+    if (result !== "ok") {
+      // A browser cannot read the status of a failed upgrade, so accept and
+      // close with a code the client understands.
+      server.accept();
+      if (result === "deleted") server.close(CLOSE_DELETED, "Document deleted");
+      else server.close(CLOSE_NOT_FOUND, "Document not found");
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ received: 0, awarenessIds: [] } satisfies Attachment);
+
+    // Step 1 from the server: the client replies with Step 2 (its edits we lack).
+    server.send(encodeSyncStep1(this.doc!));
+    const presence = this.awareness.encodeAll();
+    if (presence) server.send(encodeAwareness(presence));
+    this.restorePresenceAfterWake(server);
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async webSocketMessage(ws: WebSocket, data: ArrayBuffer | string): Promise<void> {
+    if (typeof data === "string") return this.reject(ws, CLOSE_MALFORMED, "Text messages are not supported");
+    if (data.byteLength > MAX_MESSAGE_BYTES) return this.reject(ws, CLOSE_TOO_LARGE, "Message too large");
+    const doc = this.doc;
+    if (!doc || this.deleted) return this.reject(ws, CLOSE_DELETED, "Document deleted");
+    this.restorePresenceAfterWake(ws);
+
+    let message: Message;
+    try {
+      message = decodeMessage(new Uint8Array(data));
+    } catch (error) {
+      return this.reject(ws, CLOSE_MALFORMED, error instanceof ProtocolError ? error.message : "Malformed message");
+    }
+
+    switch (message.type) {
+      case "sync-step-1":
+        // The client says what it has; reply with everything it lacks.
+        ws.send(encodeSyncStep2(doc, message.stateVector));
+        return;
+
+      case "sync-step-2":
+      case "update": {
+        try {
+          Y.decodeUpdate(message.update);
+          Y.applyUpdate(doc, message.update, ws);
+        } catch {
+          return this.reject(ws, CLOSE_MALFORMED, "Invalid Yjs update");
+        }
+        const attachment = ws.deserializeAttachment() as Attachment;
+        attachment.received += 1;
+        ws.serializeAttachment(attachment);
+        this.pendingAcks.add(ws);
+        this.scheduleFlush();
+        return;
+      }
+
+      case "awareness": {
+        let change;
+        try {
+          change = this.awareness.apply(message.update);
+        } catch {
+          return this.reject(ws, CLOSE_MALFORMED, "Invalid awareness update");
+        }
+        const attachment = ws.deserializeAttachment() as Attachment;
+        const ids = new Set(attachment.awarenessIds);
+        change.present.forEach((id) => ids.add(id));
+        change.removed.forEach((id) => ids.delete(id));
+        attachment.awarenessIds = [...ids].slice(0, 32);
+        ws.serializeAttachment(attachment);
+        this.broadcast(encodeAwareness(message.update), ws);
+        return;
+      }
+
+      case "query-awareness": {
+        const presence = this.awareness.encodeAll();
+        if (presence) ws.send(encodeAwareness(presence));
+        return;
+      }
+
+      case "ack":
+        return this.reject(ws, CLOSE_MALFORMED, "Clients do not send acks");
+    }
+  }
+
+  async webSocketClose(ws: WebSocket, code: number): Promise<void> {
+    this.removeSocket(ws);
+    try {
+      ws.close(code === 1005 || code === 1006 ? 1000 : code, "Closing");
+    } catch {
+      // Already closed.
+    }
+    if (this.openSockets().length === 0) this.lastClientLeft();
+  }
+
+  async webSocketError(ws: WebSocket): Promise<void> {
+    this.removeSocket(ws);
+    if (this.openSockets().length === 0) this.lastClientLeft();
+  }
+
+  // Loading
+
+  private async ensureLoaded(documentId: string): Promise<LoadResult> {
+    if (this.deleted) return "deleted";
+    if (this.doc) return this.storage.documentId() === documentId ? "ok" : "not-found";
+
+    let result: LoadResult = "not-found";
+    // Hold other events until the first load finishes, so no message sees a
+    // half-loaded room.
+    await this.ctx.blockConcurrencyWhile(async () => {
+      if (this.doc) {
+        result = "ok";
+        return;
+      }
+      const record = await this.store.load(documentId);
+      if (!record) return;
+
+      const doc = this.buildDoc([record.state]);
+      // Phase 1 documents have their title only in the Postgres column.
+      const title = doc.getText(TITLE_FIELD);
+      if (title.length === 0 && record.title !== "") title.insert(0, record.title);
+
+      this.storage.initialize(documentId, Y.encodeStateAsUpdate(doc));
+      this.attachDoc(doc);
+      result = "ok";
+    });
+    return result;
+  }
+
+  private buildDoc(updates: Uint8Array[]): Y.Doc {
+    const doc = new Y.Doc();
+    for (const update of updates) {
+      if (update.byteLength > 0) Y.applyUpdate(doc, update);
+    }
+    return doc;
+  }
+
+  private attachDoc(doc: Y.Doc): void {
+    doc.on("update", (update: Uint8Array, origin: unknown) => {
+      // Relay to everyone except the sender, and queue for storage.
+      this.broadcast(encodeUpdate(update), origin instanceof WebSocket ? origin : null);
+      this.pendingUpdates.push(update);
+      this.scheduleFlush();
+    });
+    this.doc = doc;
+  }
+
+  // Batched storage writes and acks
+
+  private scheduleFlush(): void {
+    this.flushTimer ??= setTimeout(() => this.flush(), BATCH_MS);
+  }
+
+  /** Write every pending update in one row, then ack each socket once. */
+  protected flush(): void {
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    if (this.deleted || !this.doc) return;
+
+    if (this.pendingUpdates.length > 0) {
+      this.storage.appendUpdate(Y.mergeUpdates(this.pendingUpdates));
+      this.pendingUpdates = [];
+      this.storage.markDirty(Date.now());
+      if (this.storage.updateCount() >= COMPACT_AFTER_BATCHES) {
+        this.storage.writeSnapshot(Y.encodeStateAsUpdate(this.doc));
+      }
+      this.afterWrite();
+    }
+
+    // The output gate holds these until the write above is durable.
+    for (const ws of this.pendingAcks) {
+      const attachment = ws.deserializeAttachment() as Attachment | null;
+      if (attachment) this.send(ws, encodeAck(attachment.received));
+    }
+    this.pendingAcks.clear();
+  }
+
+  /** Hook for snapshot scheduling. */
+  protected afterWrite(): void {}
+
+  /** Hook for the immediate snapshot when the room empties. */
+  protected lastClientLeft(): void {
+    this.flush();
+  }
+
+  // Presence
+
+  /**
+   * After hibernation the registry is empty while sockets are still open.
+   * Ask every client to resend its presence so new joiners see everyone.
+   */
+  private restorePresenceAfterWake(except: WebSocket): void {
+    if (this.awarenessQueried) return;
+    this.awarenessQueried = true;
+    if (this.awareness.size > 0) return;
+    this.broadcast(encodeQueryAwareness(), except);
+  }
+
+  private removeSocket(ws: WebSocket): void {
+    this.pendingAcks.delete(ws);
+    const attachment = ws.deserializeAttachment() as Attachment | null;
+    const removal = attachment ? this.awareness.remove(attachment.awarenessIds) : null;
+    if (removal) this.broadcast(encodeAwareness(removal), ws);
+  }
+
+  // Helpers
+
+  private openSockets(): WebSocket[] {
+    return this.ctx.getWebSockets().filter((ws) => ws.readyState === WebSocket.OPEN);
+  }
+
+  private broadcast(message: Uint8Array, except: WebSocket | null): void {
+    for (const ws of this.openSockets()) {
+      if (ws !== except) this.send(ws, message);
+    }
+  }
+
+  private send(ws: WebSocket, message: Uint8Array): void {
+    try {
+      ws.send(message);
+    } catch {
+      // The socket is closing; its close handler cleans up.
+    }
+  }
+
+  /** Close one misbehaving socket. The room and every other socket carry on. */
+  private reject(ws: WebSocket, code: number, reason: string): void {
+    console.warn(`Rejected message: ${reason}`);
+    this.removeSocket(ws);
+    try {
+      ws.close(code, reason);
+    } catch {
+      // Already closed.
+    }
+  }
+}

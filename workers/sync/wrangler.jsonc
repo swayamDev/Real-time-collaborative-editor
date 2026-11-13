@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "brahma-sync",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-23",
+  // pg needs Node APIs and TCP sockets.
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "DOCUMENT_ROOM", "class_name": "DocumentRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DocumentRoom"] }],
+  "vars": {
+    // Browser origins allowed to open a WebSocket. Comma separated.
+    "ALLOWED_ORIGINS": "http://localhost:3000,http://localhost:3100"
+  },
+  "observability": { "enabled": true }
+  // Secrets (set in .dev.vars locally, see .dev.vars.example):
+  //   DATABASE_URL          Postgres connection string (Neon pooled URL in production)
+  //   SYNC_INTERNAL_SECRET  shared with the Next app for rename and delete
+}

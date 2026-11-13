@@ -1,0 +1,5 @@
+# Copy to .dev.vars for `wrangler dev`.
+# Local Postgres from docker compose. In production use Neon's pooled connection string.
+DATABASE_URL=postgres://brahma:brahma@localhost:5432/brahma
+# Must match SYNC_INTERNAL_SECRET in the Next app's .env.local.
+SYNC_INTERNAL_SECRET=change-me-local-only

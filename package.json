@@ -7,14 +7,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint && node scripts/check-no-em-dash.mjs",
-    "typecheck": "next typegen && tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit && pnpm --filter @brahma/sync typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "db:up": "docker compose up -d --wait",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "check:bundles": "node scripts/check-bundles.mjs"
+    "check:bundles": "node scripts/check-bundles.mjs",
+    "test:sync": "pnpm --filter @brahma/sync test",
+    "dev:sync": "pnpm --filter @brahma/sync dev"
   },
   "dependencies": {
     "@brahma/protocol": "workspace:*",

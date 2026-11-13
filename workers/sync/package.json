@@ -1,0 +1,26 @@
+{
+  "name": "@brahma/sync",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Brahma sync server: a Cloudflare Worker with one Durable Object per document.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "vitest run",
+    "typecheck": "wrangler types && tsc --noEmit",
+    "types": "wrangler types",
+    "pretest": "wrangler types"
+  },
+  "dependencies": {
+    "@brahma/protocol": "workspace:*",
+    "lib0": "0.2.120",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.11",
+    "typescript": "5.9.3",
+    "vitest": "5.1.0",
+    "wrangler": "4.156.0"
+  }
+}
