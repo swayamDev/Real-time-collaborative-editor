@@ -8,6 +8,8 @@ const nextConfig: NextConfig = {
   // Do not generate AGENTS.md or similar files during `next dev`.
   agentRules: false,
   poweredByHeader: false,
+  // Workspace package shipped as TypeScript source.
+  transpilePackages: ["@brahma/protocol"],
   turbopack: {
     rules: {
       "*.css": {

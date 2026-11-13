@@ -17,6 +17,7 @@
     "check:bundles": "node scripts/check-bundles.mjs"
   },
   "dependencies": {
+    "@brahma/protocol": "workspace:*",
     "@floating-ui/dom": "^1.8.0",
     "@tiptap/core": "3.33.1",
     "@tiptap/extension-collaboration": "3.33.1",
@@ -27,6 +28,7 @@
     "@tiptap/starter-kit": "3.33.1",
     "client-only": "^0.0.1",
     "drizzle-orm": "0.45.4",
+    "lib0": "0.2.120",
     "lucide-react": "^1.72.0",
     "next": "16.4.6",
     "pg": "8.23.1",
@@ -34,6 +36,7 @@
     "react-dom": "19.3.0",
     "server-only": "^0.0.1",
     "y-prosemirror": "1.3.7",
+    "y-protocols": "1.0.7",
     "yjs": "13.6.33"
   },
   "devDependencies": {

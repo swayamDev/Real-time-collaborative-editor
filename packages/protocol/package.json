@@ -1,0 +1,20 @@
+{
+  "name": "@brahma/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Brahma sync protocol: message framing, limits, close codes and presence rules shared by the client and the sync server.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "lib0": "0.2.120",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
+  },
+  "devDependencies": {
+    "lib0": "0.2.120",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
+  }
+}
