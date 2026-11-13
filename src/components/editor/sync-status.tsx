@@ -10,7 +10,7 @@ const LABELS: Partial<Record<Status, string>> = {
   offline: "Offline",
 };
 
-export function SyncStatus({ status }: { status: Status }) {
+export function SyncStatus({ status, pending = false }: { status: Status; pending?: boolean }) {
   const label = LABELS[status];
   return (
     <div
@@ -18,6 +18,7 @@ export function SyncStatus({ status }: { status: Status }) {
       aria-live="polite"
       data-testid="sync-status"
       data-status={status}
+      data-pending={pending}
       className={cn(
         "px-2 text-ui-sm whitespace-nowrap",
         status === "reconnecting" || status === "offline" ? "text-ink" : "text-ink-muted",

@@ -15,7 +15,7 @@ import { PresenceBar } from "./presence-bar";
 import { buildExtensions } from "./extensions";
 import { SharedTitleField } from "./shared-title-field";
 import { SyncStatus } from "./sync-status";
-import { type SyncSession, useSyncSession, useSyncStatus } from "./use-sync-session";
+import { type SyncSession, useSyncSession, useSyncStatus, useUnconfirmedChanges } from "./use-sync-session";
 
 /**
  * Move the caret to the start of the body synchronously. TipTap's focus
@@ -59,6 +59,7 @@ export function DocumentEditor({ id, initialTitle, initialUpdatedAt, initialStat
   const [ydoc] = useState(() => loadDoc(base64ToBytes(initialState)));
   const session = useSyncSession(id, ydoc);
   const status = useSyncStatus(session);
+  const pending = useUnconfirmedChanges(session);
 
   // Synced at least once: the shared title is authoritative from then on.
   const [synced, setSynced] = useState(false);
@@ -112,7 +113,7 @@ export function DocumentEditor({ id, initialTitle, initialUpdatedAt, initialStat
       <TopBar
         title={displayTitle(shownTitle)}
         titleMuted={shownTitle.trim() === ""}
-        status={<SyncStatus status={status} />}
+        status={<SyncStatus status={status} pending={pending} />}
         presence={session && <PresenceBar awareness={session.awareness} />}
       />
       <main id="main" className="flex-1 overflow-y-auto" data-testid="document-scroll">

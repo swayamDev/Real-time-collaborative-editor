@@ -50,6 +50,9 @@ function renderCaret(user: Record<string, unknown>): HTMLElement {
   const color = caretColor(user);
   const caret = document.createElement("span");
   caret.className = "collab-caret";
+  // Presence is announced by the avatar list; keep flags out of the text.
+  caret.setAttribute("aria-hidden", "true");
+  caret.contentEditable = "false";
   caret.style.setProperty("--caret-color", `var(--collab-${color})`);
   const label = document.createElement("span");
   label.className = "collab-caret-label";

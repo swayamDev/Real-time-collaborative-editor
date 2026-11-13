@@ -59,6 +59,15 @@ export function useSyncSession(documentId: string, doc: Y.Doc): SyncSession | nu
 
 const noop = () => () => {};
 
+/** True while local edits are not yet confirmed by the sync server. */
+export function useUnconfirmedChanges(session: SyncSession | null): boolean {
+  return useSyncExternalStore(
+    session ? (listener) => session.provider.subscribe(listener) : noop,
+    () => session?.provider.hasUnconfirmedChanges ?? false,
+    () => false,
+  );
+}
+
 export function useSyncStatus(session: SyncSession | null): SyncStatus {
   return useSyncExternalStore(
     session ? (listener) => session.provider.subscribe(listener) : noop,

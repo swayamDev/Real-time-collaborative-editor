@@ -86,6 +86,7 @@ export class SyncProvider {
   private readonly env: ProviderEnvironment;
   private socket: WebSocket | null = null;
   private status: SyncStatus = "connecting";
+  private pending = false;
   private listeners = new Set<Listener>();
   private ackListeners = new Set<Listener>();
 
@@ -123,7 +124,7 @@ export class SyncProvider {
     return this.status;
   }
 
-  /** Called whenever the status may have changed. Returns an unsubscribe function. */
+  /** Called when the status or hasUnconfirmedChanges changes. Returns an unsubscribe function. */
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -329,8 +330,10 @@ export class SyncProvider {
 
   private updateStatus(): void {
     const next = this.computeStatus();
-    if (next === this.status) return;
+    const pending = this.hasUnconfirmedChanges;
+    if (next === this.status && pending === this.pending) return;
     this.status = next;
+    this.pending = pending;
     this.listeners.forEach((listener) => listener());
   }
 
