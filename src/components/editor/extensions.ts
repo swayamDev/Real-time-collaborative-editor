@@ -48,6 +48,54 @@ const EditSizeGuard = Extension.create<{ onTooLarge: () => void }>({
   },
 });
 
+/** Mutable so the guard follows role changes without rebuilding the editor. */
+export class ReadOnlyState {
+  constructor(private value: boolean) {}
+
+  get current(): boolean {
+    return this.value;
+  }
+
+  set(value: boolean): void {
+    this.value = value;
+  }
+}
+
+const HISTORY_KEYS = new Set(["z", "y"]);
+
+/**
+ * Read-only for viewers, enforced inside the editor rather than only by
+ * hiding controls. While read-only it refuses every local change (typing,
+ * paste, drop, commands from any toolbar), swallows undo and redo (Yjs undo
+ * writes to the document directly, below ProseMirror), and makes the view
+ * non-editable. Changes from the server still apply.
+ */
+const ReadOnlyGuard = Extension.create<{ state: ReadOnlyState }>({
+  name: "brahmaReadOnlyGuard",
+  // Before the Collaboration extension, so undo shortcuts reach this first.
+  priority: 1000,
+  addOptions() {
+    return { state: new ReadOnlyState(false) };
+  },
+  addProseMirrorPlugins() {
+    const { state } = this.options;
+    return [
+      new Plugin({
+        key: new PluginKey("brahmaReadOnlyGuard"),
+        filterTransaction: (transaction) => !state.current || !transaction.docChanged || isChangeOrigin(transaction),
+        props: {
+          editable: () => !state.current,
+          handlePaste: () => state.current,
+          handleDrop: () => state.current,
+          handleTextInput: () => state.current,
+          handleKeyDown: (_view, event) =>
+            state.current && (event.metaKey || event.ctrlKey) && HISTORY_KEYS.has(event.key.toLowerCase()),
+        },
+      }),
+    ];
+  },
+});
+
 const EditorShortcuts = Extension.create<EditorShortcutOptions>({
   name: "brahmaShortcuts",
   addOptions() {
@@ -102,11 +150,8 @@ function renderSelection(user: Record<string, unknown>) {
   };
 }
 
-export function buildExtensions(
-  ydoc: Y.Doc,
-  shortcuts: EditorShortcutOptions,
-  awareness: Awareness,
-): Extensions {
+/** The document schema: what a Brahma document can contain. */
+export function contentExtensions(): Extensions {
   return [
     StarterKit.configure({
       // Yjs owns history. Its undo manager comes with the Collaboration extension.
@@ -124,7 +169,19 @@ export function buildExtensions(
     }),
     TaskList,
     TaskItem.configure({ nested: true }),
-    Placeholder.configure({ placeholder: "Start writing" }),
+  ];
+}
+
+export function buildExtensions(
+  ydoc: Y.Doc,
+  shortcuts: EditorShortcutOptions,
+  awareness: Awareness,
+  readOnly: ReadOnlyState,
+): Extensions {
+  return [
+    ...contentExtensions(),
+    ReadOnlyGuard.configure({ state: readOnly }),
+    Placeholder.configure({ placeholder: () => (readOnly.current ? "" : "Start writing") }),
     Collaboration.configure({ document: ydoc, field: CONTENT_FIELD }),
     CollaborationCaret.configure({
       // The extension only reads `provider.awareness`.

@@ -4,10 +4,10 @@ import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protoc
 import * as Y from "yjs";
 import { caretColor, caretName, participants, syncOwnColor } from "./presence";
 
-function client(name: string, guestId: string, joinedAt: number) {
+function client(name: string, userId: string, joinedAt: number) {
   const doc = new Y.Doc();
   const awareness = new Awareness(doc);
-  awareness.setLocalStateField("user", { name, guestId, joinedAt, color: preferredColor(guestId) });
+  awareness.setLocalStateField("user", { id: userId, name, joinedAt, color: preferredColor(userId) });
   return awareness;
 }
 
@@ -16,7 +16,7 @@ function exchange(a: Awareness, b: Awareness): void {
   applyAwarenessUpdate(a, encodeAwarenessUpdate(b, [...b.getStates().keys()]), "remote");
 }
 
-/** Guest ids that prefer the same color. */
+/** User ids that prefer the same color. */
 function samePreference(): [string, string] {
   const target = preferredColor("guest-0");
   for (let i = 1; ; i++) {
@@ -29,7 +29,7 @@ describe("participants", () => {
     const me = client("Me", "guest-me", 1);
     const peerDoc = new Y.Doc();
     const peer = new Awareness(peerDoc);
-    peer.setLocalStateField("user", { name: "‮eve\u0000  ", guestId: "g", joinedAt: 0, color: "url(x)" });
+    peer.setLocalStateField("user", { name: "‮eve\u0000  ", id: "g", joinedAt: 0, color: "url(x)" });
     exchange(me, peer);
 
     const people = participants(me);
@@ -38,6 +38,23 @@ describe("participants", () => {
     expect(["indigo", "madder", "turmeric", "leaf", "lac", "kattha"]).toContain(people[1].color);
     me.destroy();
     peer.destroy();
+  });
+
+  it("lists a person with several tabs once, with one color", () => {
+    const me = client("Me", "user-me", 1);
+    const tab1 = client("Ada", "user-ada", 2);
+    const tab2 = client("Ada", "user-ada", 3);
+    exchange(me, tab1);
+    exchange(me, tab2);
+
+    const people = participants(me);
+    expect(people.map((p) => p.name)).toEqual(["Me", "Ada"]);
+    expect(people[1].clientId).toBe(tab1.clientID);
+    // My own second tab is still me.
+    const myOtherTab = client("Me", "user-me", 4);
+    exchange(tab2, myOtherTab);
+    expect(participants(myOtherTab).filter((p) => p.isSelf)).toHaveLength(1);
+    for (const a of [me, tab1, tab2, myOtherTab]) a.destroy();
   });
 
   it("ignores states without a user", () => {
@@ -78,7 +95,7 @@ describe("syncOwnColor", () => {
 describe("caret helpers", () => {
   it("only accept color tokens and sanitized names", () => {
     expect(caretColor({ color: "lac" })).toBe("lac");
-    expect(caretColor({ color: "red; background: url(x)", guestId: "g" })).toBe(preferredColor("g"));
+    expect(caretColor({ color: "red; background: url(x)", id: "g" })).toBe(preferredColor("g"));
     expect(caretName({ name: "  <b>Ada</b>\u0007 " })).toBe("<b>Ada</b>");
     expect(caretName({})).toBe("Guest");
   });

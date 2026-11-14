@@ -10,12 +10,18 @@ export type CollabColor = (typeof COLLAB_COLORS)[number];
 export const NAME_MAX_LENGTH = 40;
 export const DEFAULT_NAME = "Guest";
 
-/** What each client publishes in its awareness state under `user`. */
+/**
+ * A peer's presence, read from its awareness state. On the wire the state is
+ * `user: { id, name, image, color, joinedAt }`; the sync server checks `id`
+ * against the signed-in user and rewrites `name` and `image` from the token.
+ */
 export interface PresenceUser {
   name: string;
   color: CollabColor;
-  /** Stable per browser (cookie), used to pick a preferred color. */
-  guestId: string;
+  /** The account id. Picks the preferred color and groups one person's tabs. */
+  userId: string;
+  /** Avatar URL from the account, https only; null shows initials. */
+  image: string | null;
   /** Milliseconds since epoch when this client joined. Tie-break for colors. */
   joinedAt: number;
 }
@@ -36,10 +42,22 @@ export function isCollabColor(value: unknown): value is CollabColor {
   return typeof value === "string" && (COLLAB_COLORS as readonly string[]).includes(value);
 }
 
-const GUEST_ID = /^[A-Za-z0-9-]{1,64}$/;
+const USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const IMAGE_MAX_LENGTH = 2048;
 
-function sanitizeGuestId(raw: unknown, clientId: number): string {
-  return typeof raw === "string" && GUEST_ID.test(raw) ? raw : `client-${clientId}`;
+/** Only absolute https URLs, so an avatar can never be a script or data URL. */
+export function sanitizeImage(raw: unknown): string | null {
+  if (typeof raw !== "string" || raw.length > IMAGE_MAX_LENGTH) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeUserId(raw: unknown, clientId: number): string {
+  return typeof raw === "string" && USER_ID.test(raw) ? raw : `client-${clientId}`;
 }
 
 function sanitizeJoinedAt(raw: unknown): number {
@@ -56,8 +74,8 @@ export function hashString(value: string): number {
   return hash >>> 0;
 }
 
-export function preferredColor(guestId: string): CollabColor {
-  return COLLAB_COLORS[hashString(guestId) % COLLAB_COLORS.length];
+export function preferredColor(userId: string): CollabColor {
+  return COLLAB_COLORS[hashString(userId) % COLLAB_COLORS.length];
 }
 
 /**
@@ -69,35 +87,49 @@ export function parsePeerUser(state: unknown, clientId: number): PresenceUser | 
   const user = (state as { user?: unknown }).user;
   if (typeof user !== "object" || user === null) return null;
   const raw = user as Record<string, unknown>;
-  const guestId = sanitizeGuestId(raw.guestId, clientId);
+  const userId = sanitizeUserId(raw.id, clientId);
   return {
     name: sanitizeName(raw.name),
-    color: isCollabColor(raw.color) ? raw.color : preferredColor(guestId),
-    guestId,
+    color: isCollabColor(raw.color) ? raw.color : preferredColor(userId),
+    userId,
+    image: sanitizeImage(raw.image),
     joinedAt: sanitizeJoinedAt(raw.joinedAt),
   };
 }
 
 export interface ColorCandidate {
   clientId: number;
-  guestId: string;
+  userId: string;
   joinedAt: number;
 }
 
 /**
- * Assign one color per client, the same way on every client.
+ * Assign one color per person, the same way on every client. All of one
+ * user's tabs share a color.
  *
- * Clients are ordered by joinedAt, then by Yjs client id. In that order each
- * takes its preferred color if it is free, otherwise the next free color
- * around the palette. Earlier joiners keep their color when someone joins.
- * Duplicates only happen with more than six people in a room.
+ * People are ordered by their earliest joinedAt, then by Yjs client id. In
+ * that order each takes its preferred color if it is free, otherwise the
+ * next free color around the palette. Earlier joiners keep their color when
+ * someone joins. Duplicates only happen with more than six people in a room.
+ * Returns the color for every client id.
  */
 export function assignColors(candidates: readonly ColorCandidate[]): Map<number, CollabColor> {
-  const ordered = [...candidates].sort((a, b) => a.joinedAt - b.joinedAt || a.clientId - b.clientId);
+  const earliest = new Map<string, ColorCandidate>();
+  for (const candidate of candidates) {
+    const current = earliest.get(candidate.userId);
+    if (
+      !current ||
+      candidate.joinedAt < current.joinedAt ||
+      (candidate.joinedAt === current.joinedAt && candidate.clientId < current.clientId)
+    ) {
+      earliest.set(candidate.userId, candidate);
+    }
+  }
+  const ordered = [...earliest.values()].sort((a, b) => a.joinedAt - b.joinedAt || a.clientId - b.clientId);
   const taken = new Set<CollabColor>();
-  const result = new Map<number, CollabColor>();
+  const byUser = new Map<string, CollabColor>();
   for (const candidate of ordered) {
-    const start = COLLAB_COLORS.indexOf(preferredColor(candidate.guestId));
+    const start = COLLAB_COLORS.indexOf(preferredColor(candidate.userId));
     let color = COLLAB_COLORS[start];
     for (let step = 0; step < COLLAB_COLORS.length; step++) {
       const option = COLLAB_COLORS[(start + step) % COLLAB_COLORS.length];
@@ -107,9 +139,9 @@ export function assignColors(candidates: readonly ColorCandidate[]): Map<number,
       }
     }
     taken.add(color);
-    result.set(candidate.clientId, color);
+    byUser.set(candidate.userId, color);
   }
-  return result;
+  return new Map(candidates.map((candidate) => [candidate.clientId, byUser.get(candidate.userId)!]));
 }
 
 /** Initials for an avatar: first letters of the first two words. */

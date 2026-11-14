@@ -5,6 +5,7 @@ import {
   decodeMessage,
   encodeAck,
   encodeAwareness,
+  encodeRole,
   encodeSyncStep1,
   encodeSyncStep2,
 } from "@brahma/protocol";
@@ -14,14 +15,17 @@ import { Awareness, encodeAwarenessUpdate } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { LocalDocument, TAB_ORIGIN } from "./local-document";
 import { LocalStore } from "./local-store";
+import type { Role } from "../permissions";
 import {
   BACKOFF_MAX_MS,
   type LockManagerLike,
   type ProviderEnvironment,
   SyncProvider,
+  TOKEN_REFRESH_AT,
   clientsMissingOnServer,
   packEntries,
 } from "./provider";
+import type { TokenResult } from "./sync-token-client";
 
 const OPEN = 1;
 const CLOSED = 3;
@@ -32,6 +36,8 @@ class FakeServer {
   /** Every document message received, decoded. */
   readonly received: Uint8Array[] = [];
   rejectIf: (update: Uint8Array) => boolean = () => false;
+  /** Close every new socket with this code before it opens, like the room refusing a token. */
+  refuseWith: number | null = null;
 
   handle(socket: FakeSocket, message: Message): void {
     switch (message.type) {
@@ -65,6 +71,8 @@ class FakeSocket {
   binaryType = "blob";
   acks = 0;
   readonly sent: Message[] = [];
+  /** The subprotocols the client offered, as a browser would send them. */
+  protocols: string[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: ArrayBuffer }) => void) | null = null;
   onclose: ((event: { code: number }) => void) | null = null;
@@ -73,6 +81,7 @@ class FakeSocket {
   constructor(private readonly server: FakeServer) {
     queueMicrotask(() => {
       if (this.readyState !== 0) return;
+      if (this.server.refuseWith !== null) return this.serverClose(this.server.refuseWith);
       this.readyState = OPEN;
       this.onopen?.();
       // The server's own Step 1 on connect.
@@ -144,7 +153,19 @@ interface Tab {
   provider: SyncProvider;
   sockets: FakeSocket[];
   setOnline: (online: boolean) => void;
+  /** Token results to hand out next, in order; then the default. */
+  tokens: TokenResult[];
+  tokenRequests: number;
+  learned: Array<Role | null>;
 }
+
+let tokenSerial = 0;
+const okToken = (role: Role = "editor", expiresIn = 600): TokenResult => ({
+  kind: "ok",
+  token: `token-${++tokenSerial}`,
+  role,
+  expiresIn,
+});
 
 let factory: IDBFactory;
 let store: LocalStore;
@@ -154,11 +175,13 @@ let locks: ReturnType<typeof fakeLocks>;
 const connectivity = new Set<() => void>();
 const tabs: Tab[] = [];
 
-async function openTab(docId = "doc"): Promise<Tab> {
+async function openTab(docId = "doc", options: { role?: Role; tokens?: TokenResult[] } = {}): Promise<Tab> {
   const sockets: FakeSocket[] = [];
+  const role = options.role ?? "editor";
   const environment: ProviderEnvironment = {
-    createSocket: () => {
+    createSocket: (_url, protocols) => {
       const socket = new FakeSocket(server);
+      socket.protocols = protocols;
       sockets.push(socket);
       return socket as unknown as WebSocket;
     },
@@ -172,16 +195,30 @@ async function openTab(docId = "doc"): Promise<Tab> {
   };
   const local = await LocalDocument.open(store, docId, new Uint8Array());
   const awareness = new Awareness(local.doc);
-  const provider = new SyncProvider({ url: "ws://sync.test/documents/doc", local, awareness, environment });
   const tab = {
     local,
-    provider,
+    provider: null as unknown as SyncProvider,
     sockets,
     setOnline: (value: boolean) => {
       online = value;
       connectivity.forEach((listener) => listener());
     },
+    tokens: options.tokens ?? [],
+    tokenRequests: 0,
+    learned: [] as Array<Role | null>,
   };
+  tab.provider = new SyncProvider({
+    url: "ws://sync.test/documents/doc",
+    local,
+    awareness,
+    environment,
+    initialRole: role,
+    fetchToken: async () => {
+      tab.tokenRequests += 1;
+      return tab.tokens.shift() ?? okToken(role);
+    },
+    onAccessLearned: (learned) => tab.learned.push(learned),
+  });
   tabs.push(tab);
   return tab;
 }
@@ -372,6 +409,179 @@ describe("other states", () => {
     tab.sockets[0].serverClose(1006);
     await until(() => !awareness.getStates().has(peerDoc.clientID), "peer cleared");
     peer.destroy();
+  });
+});
+
+describe("sync tokens", () => {
+  it("connects with brahma.v1 and the token as subprotocols", async () => {
+    const tab = await openTab("doc", { tokens: [okToken("editor")] });
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    expect(tab.sockets[0].protocols).toEqual(["brahma.v1", `auth.token-${tokenSerial}`]);
+  });
+
+  it("refreshes the token in band at 70% of its lifetime, without reconnecting", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    await tick(600_000 * TOKEN_REFRESH_AT + 50);
+    await until(() => tab.sockets[0].sent.some((message) => message.type === "auth"), "auth message");
+    expect(tab.tokenRequests).toBe(2);
+    expect(tab.sockets).toHaveLength(1);
+  });
+
+  it("shows session ended when the refresh finds the user signed out", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.tokens.push({ kind: "signed-out" });
+    await tick(600_000 * TOKEN_REFRESH_AT + 50);
+    await until(() => tab.provider.getStatus() === "session-ended", "session ended");
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets).toHaveLength(1);
+  });
+
+  it("never opens a socket when the first token request finds no session", async () => {
+    const tab = await openTab("doc", { tokens: [{ kind: "signed-out" }] });
+    await until(() => tab.provider.getStatus() === "session-ended", "session ended");
+    expect(tab.sockets).toHaveLength(0);
+  });
+
+  it("retries with backoff while the app is unreachable", async () => {
+    const tab = await openTab("doc", { tokens: [{ kind: "unavailable" }, { kind: "unavailable" }] });
+    await until(() => tab.provider.getStatus() === "saved", "saved", 1_000);
+    expect(tab.tokenRequests).toBe(3);
+  });
+});
+
+describe("close codes", () => {
+  it("4401: fetches a fresh token and reconnects once", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.sockets[0].serverClose(4401);
+    await until(() => tab.sockets.length === 2, "reconnected");
+    expect(tab.tokenRequests).toBe(2);
+    await until(() => tab.provider.getStatus() === "saved", "saved again");
+  });
+
+  it("4401 twice without a sync between ends the session instead of looping", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    // The room keeps refusing even fresh tokens (for example, a revoked session).
+    server.refuseWith = 4401;
+    tab.sockets[0].serverClose(4401);
+    await until(() => tab.provider.getStatus() === "session-ended", "session ended");
+    expect(tab.tokenRequests).toBe(2);
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets).toHaveLength(2);
+  });
+
+  it("4403: revoked, never reconnects, and tells other tabs", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.sockets[0].serverClose(4403);
+    await until(() => tab.provider.getStatus() === "revoked", "revoked");
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets).toHaveLength(1);
+    expect(tab.learned).toContain(null);
+  });
+
+  it("4405: stops for downgrade handling as a viewer, without reconnecting itself", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.sockets[0].serverClose(4405);
+    await until(() => tab.provider.getStatus() === "downgraded", "downgraded");
+    expect(tab.provider.getRole()).toBe("viewer");
+    expect(tab.learned).toContain("viewer");
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets).toHaveLength(1);
+  });
+
+  it("4405 as a viewer halts instead of looping", async () => {
+    const tab = await openTab("doc", { role: "viewer" });
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.sockets[0].serverClose(4405);
+    await until(() => tab.provider.getStatus() === "halted", "halted");
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets).toHaveLength(1);
+  });
+
+  it("1008: halts with no retry", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.sockets[0].serverClose(1008);
+    await until(() => tab.provider.getStatus() === "halted", "halted");
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets).toHaveLength(1);
+  });
+
+  it("1007 with nothing in flight halts with no retry", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.sockets[0].serverClose(1007);
+    await until(() => tab.provider.getStatus() === "halted", "halted");
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets).toHaveLength(1);
+  });
+
+  it("a token request answering no access stops as revoked", async () => {
+    const tab = await openTab("doc", { tokens: [{ kind: "no-access" }] });
+    await until(() => tab.provider.getStatus() === "revoked", "revoked");
+    expect(tab.sockets).toHaveLength(0);
+  });
+
+  it("a token request answering deleted stops as deleted", async () => {
+    const tab = await openTab("doc", { tokens: [{ kind: "deleted" }] });
+    await until(() => tab.provider.getStatus() === "deleted", "deleted");
+    expect(tab.sockets).toHaveLength(0);
+  });
+});
+
+describe("roles", () => {
+  it("a role message downgrades in place when nothing is pending", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.sockets[0].deliver(encodeRole("viewer"));
+    await until(() => tab.provider.getRole() === "viewer", "viewer");
+    expect(tab.provider.getStatus()).toBe("saved");
+    expect(tab.learned).toEqual(["viewer"]);
+  });
+
+  it("a downgrade with edits the server never received stops for downgrade handling", async () => {
+    online = false;
+    const tab = await openTab("doc", { tokens: [okToken("viewer")] });
+    type(tab.local, "written offline");
+    await until(async () => (await pendingCount()) === 1, "stored");
+    tab.setOnline(true);
+    await until(() => tab.provider.getStatus() === "downgraded", "downgraded");
+    // Nothing was sent: the socket was never opened.
+    expect(tab.sockets).toHaveLength(0);
+    expect(server.text()).toBe("");
+  });
+
+  it("a viewer never sends document changes", async () => {
+    const tab = await openTab("doc", { role: "viewer" });
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    type(tab.local, "should not leave");
+    await until(() => tab.provider.getStatus() === "downgraded", "stopped");
+    expect(tab.sockets[0].sent.filter((message) => message.type === "update")).toHaveLength(0);
+    expect(server.text()).toBe("");
+  });
+
+  it("an upgrade from another tab is checked with the server, not trusted", async () => {
+    const tab = await openTab("doc", { role: "viewer" });
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    const before = tab.tokenRequests;
+    tab.tokens.push(okToken("viewer"));
+    tab.provider.applyAccessNotice("editor");
+    await until(() => tab.tokenRequests === before + 1, "asked the server");
+    expect(tab.provider.getRole()).toBe("viewer");
+  });
+
+  it("a downgrade or revoke from another tab applies at once", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.provider.applyAccessNotice("viewer");
+    expect(tab.provider.getRole()).toBe("viewer");
+    tab.provider.applyAccessNotice(null);
+    expect(tab.provider.getStatus()).toBe("revoked");
   });
 });
 

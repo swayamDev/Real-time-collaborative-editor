@@ -11,16 +11,25 @@ import {
 import type { Awareness } from "y-protocols/awareness";
 
 export interface Participant {
+  /** The client id of this person's earliest tab in the room. */
   clientId: number;
+  userId: string;
   name: string;
+  image: string | null;
   color: CollabColor;
   isSelf: boolean;
 }
 
+/** What this tab publishes as its presence, from the signed-in account. */
+export function selfPresence(user: { id: string; name: string; image: string | null }, joinedAt = Date.now()) {
+  return { id: user.id, name: sanitizeName(user.name), image: user.image, joinedAt, color: preferredColor(user.id) };
+}
+
 /**
- * Everyone in the room, self first, then by join order. Colors come from
- * the deterministic assignment, so every client shows the same colors no
- * matter what a peer claims.
+ * Everyone in the room, one entry per person: self first, then by join
+ * order. Your own other tabs count as you. Colors come from the
+ * deterministic assignment, so every client shows the same colors no matter
+ * what a peer claims.
  */
 export function participants(awareness: Awareness): Participant[] {
   const selfId = awareness.clientID;
@@ -29,19 +38,30 @@ export function participants(awareness: Awareness): Participant[] {
     const user = parsePeerUser(state, clientId);
     if (user) users.push({ clientId, user });
   });
-  const colors = assignColors(users.map(({ clientId, user }) => ({ clientId, guestId: user.guestId, joinedAt: user.joinedAt })));
-  return users
-    .sort((a, b) => {
-      if (a.clientId === selfId) return -1;
-      if (b.clientId === selfId) return 1;
-      return a.user.joinedAt - b.user.joinedAt || a.clientId - b.clientId;
-    })
+  const colors = assignColors(users.map(({ clientId, user }) => ({ clientId, userId: user.userId, joinedAt: user.joinedAt })));
+  const selfUserId = users.find(({ clientId }) => clientId === selfId)?.user.userId;
+
+  const byUser = new Map<string, { clientId: number; user: PresenceUser }>();
+  for (const entry of users) {
+    const current = byUser.get(entry.user.userId);
+    if (!current || entry.user.joinedAt < current.user.joinedAt || (entry.user.joinedAt === current.user.joinedAt && entry.clientId < current.clientId)) {
+      byUser.set(entry.user.userId, entry);
+    }
+  }
+  return [...byUser.values()]
     .map(({ clientId, user }) => ({
       clientId,
+      userId: user.userId,
       name: user.name,
+      image: user.image,
       color: colors.get(clientId) ?? user.color,
-      isSelf: clientId === selfId,
-    }));
+      isSelf: user.userId === selfUserId,
+    }))
+    .sort((a, b) => {
+      if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
+      const joined = (p: Participant) => byUser.get(p.userId)!.user.joinedAt;
+      return joined(a) - joined(b) || a.clientId - b.clientId;
+    });
 }
 
 /**
@@ -50,7 +70,7 @@ export function participants(awareness: Awareness): Participant[] {
  */
 export function syncOwnColor(awareness: Awareness): void {
   const self = participants(awareness).find((participant) => participant.isSelf);
-  const current = awareness.getLocalState()?.user as Partial<PresenceUser> | undefined;
+  const current = awareness.getLocalState()?.user as Record<string, unknown> | undefined;
   if (self && current && current.color !== self.color) {
     awareness.setLocalStateField("user", { ...current, color: self.color });
   }
@@ -59,8 +79,7 @@ export function syncOwnColor(awareness: Awareness): void {
 /** Collaborator token for a caret, from untrusted awareness data. */
 export function caretColor(user: Record<string, unknown>): CollabColor {
   if (isCollabColor(user.color)) return user.color;
-  const guestId = typeof user.guestId === "string" ? user.guestId : "";
-  return preferredColor(guestId);
+  return preferredColor(typeof user.id === "string" ? user.id : "");
 }
 
 export function caretName(user: Record<string, unknown>): string {

@@ -1,12 +1,11 @@
 import "client-only";
 import {
+  AUTH_SUBPROTOCOL_PREFIX,
   BATCH_TARGET_BYTES,
-  CLOSE_DELETED,
-  CLOSE_MALFORMED,
-  CLOSE_TOO_LARGE,
   type Message,
-  TERMINAL_CLOSE_CODES,
+  SYNC_SUBPROTOCOL,
   decodeMessage,
+  encodeAuth,
   encodeAwareness,
   encodeSyncStep1,
   encodeUpdate,
@@ -18,16 +17,26 @@ import {
   removeAwarenessStates,
 } from "y-protocols/awareness";
 import * as Y from "yjs";
+import type { Role } from "../permissions";
+import { isLowerAccess } from "./access-channel";
+import { closeAction } from "./close-policy";
 import { type LocalDocument, type LocalEdit, type PendingEntry, REMOTE_ORIGIN } from "./local-document";
 import { encodeStateVectorMap } from "./state-vector";
-import { type SyncStatus, computeStatus } from "./status";
+import { type StopReason, type SyncStatus, computeStatus } from "./status";
+import type { TokenResult } from "./sync-token-client";
 
-export type { SyncStatus };
+export type { StopReason, SyncStatus };
 
 export const BACKOFF_BASE_MS = 500;
 export const BACKOFF_MAX_MS = 10_000;
 /** Rounds of "send what the server lacks" before giving up and halting. */
 export const MAX_CONVERGENCE_ROUNDS = 3;
+/** Refresh the sync token after this share of its lifetime. */
+export const TOKEN_REFRESH_AT = 0.7;
+/** After a failed refresh, try again this much later (the token is still valid). */
+export const TOKEN_RETRY_MS = 30_000;
+/** A cached token is reused for a reconnect only with at least this much life left. */
+const TOKEN_MIN_REMAINING_MS = 60_000;
 
 const OPEN = 1;
 
@@ -38,7 +47,7 @@ export interface LockManagerLike {
 
 /** The parts of the browser the provider needs; replaced by fakes in tests. */
 export interface ProviderEnvironment {
-  createSocket(url: string): WebSocket;
+  createSocket(url: string, protocols: string[]): WebSocket;
   isOnline(): boolean;
   /** Subscribe to online/offline changes. Returns an unsubscribe function. */
   onConnectivityChange(listener: () => void): () => void;
@@ -47,7 +56,7 @@ export interface ProviderEnvironment {
 }
 
 export const browserEnvironment: ProviderEnvironment = {
-  createSocket: (url) => new WebSocket(url),
+  createSocket: (url, protocols) => new WebSocket(url, protocols),
   isOnline: () => navigator.onLine,
   onConnectivityChange: (listener) => {
     window.addEventListener("online", listener);
@@ -70,6 +79,12 @@ interface ProviderOptions {
   url: string;
   local: LocalDocument;
   awareness: Awareness;
+  /** Fetches a fresh sync token from the app. */
+  fetchToken: () => Promise<TokenResult>;
+  /** The role the page was rendered with; the token's role replaces it. */
+  initialRole: Role;
+  /** Called with every role this tab learns from the server (null: no access). */
+  onAccessLearned?: (role: Role | null) => void;
   environment?: ProviderEnvironment;
 }
 
@@ -156,8 +171,15 @@ export class SyncProvider {
   private flushing = false;
   private isolate = false;
   private halted: boolean;
-  private terminal: "deleted" | "not-found" | null = null;
+  private terminal: StopReason | null = null;
   private destroyed = false;
+  private role: Role;
+  /** Waiting for a token before opening a socket. */
+  private connecting = false;
+  private token: { value: string; expiresAt: number } | null = null;
+  /** A 4401 led to a fresh token and no connection has synced since. */
+  private refreshedSinceLastSync = false;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private attempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private statusTimer: ReturnType<typeof setTimeout> | null = null;
@@ -168,6 +190,7 @@ export class SyncProvider {
   constructor(private readonly options: ProviderOptions) {
     this.env = options.environment ?? browserEnvironment;
     this.halted = options.local.halted;
+    this.role = options.initialRole;
     const { local, awareness } = options;
     this.unsubscribers.push(
       local.onLocalEdit(this.onLocalEdit),
@@ -184,6 +207,23 @@ export class SyncProvider {
 
   getStatus(): SyncStatus {
     return this.status;
+  }
+
+  /** The current user's role, as the server last said. */
+  getRole(): Role {
+    return this.role;
+  }
+
+  /**
+   * Another tab of this user learned a role from the server. Less access is
+   * applied at once; more access is only taken from the server, by
+   * refreshing the token.
+   */
+  applyAccessNotice(role: Role | null): void {
+    if (this.destroyed || this.terminal) return;
+    if (role === null) return this.stop("revoked");
+    if (isLowerAccess(this.role, role)) this.applyRole(role);
+    else if (role !== this.role) void this.refreshToken();
   }
 
   subscribe(listener: Listener): () => void {
@@ -213,18 +253,124 @@ export class SyncProvider {
     const { local, awareness } = this.options;
     this.unsubscribers.forEach((unsubscribe) => unsubscribe());
     awareness.off("update", this.onAwarenessUpdate);
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.clearTimers();
     if (this.statusTimer) clearTimeout(this.statusTimer);
     removeAwarenessStates(awareness, [local.doc.clientID], "local");
     this.closeConnection(1000, "Leaving");
   }
 
+  private clearTimers(): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.reconnectTimer = null;
+    this.refreshTimer = null;
+  }
+
+  /** Stop for good (until the session is rebuilt): no socket, no timers. */
+  private stop(reason: StopReason): void {
+    if (this.terminal) return;
+    this.terminal = reason;
+    this.clearTimers();
+    this.closeConnection(1000, "Stopped");
+    this.flushing = false;
+    if (reason === "revoked") this.options.onAccessLearned?.(null);
+    this.updateStatus();
+  }
+
   // Connection lifecycle
 
   private connect(): void {
-    if (this.destroyed || this.terminal || this.halted || this.connection) return;
+    if (this.destroyed || this.terminal || this.halted || this.connection || this.connecting) return;
     if (!this.env.isOnline()) return;
-    const socket = this.env.createSocket(this.options.url);
+    this.connecting = true;
+    void this.tokenForConnect().then((token) => {
+      this.connecting = false;
+      if (token === null || this.destroyed || this.terminal || this.halted || this.connection) return;
+      if (!this.env.isOnline()) return;
+      this.open(token);
+    });
+  }
+
+  /** A token with enough life left, or null when connecting must wait or stop. */
+  private async tokenForConnect(): Promise<string | null> {
+    if (this.token && this.token.expiresAt - Date.now() > TOKEN_MIN_REMAINING_MS) return this.token.value;
+    const result = await this.options.fetchToken();
+    if (this.destroyed || this.terminal) return null;
+    if (result.kind !== "ok") {
+      this.onTokenFailure(result);
+      return null;
+    }
+    this.acceptToken(result);
+    // The token's role may have stopped this provider (downgrade with unsynced edits).
+    return this.terminal ? null : result.token;
+  }
+
+  private onTokenFailure(result: Exclude<TokenResult, { kind: "ok" }>): void {
+    switch (result.kind) {
+      case "signed-out":
+        return this.stop("session-ended");
+      case "no-access":
+        return this.stop("revoked");
+      case "deleted":
+        return this.stop("deleted");
+      case "unavailable":
+        this.scheduleReconnect();
+        this.updateStatus();
+    }
+  }
+
+  private acceptToken(result: Extract<TokenResult, { kind: "ok" }>): void {
+    const lifetimeMs = result.expiresIn * 1000;
+    this.token = { value: result.token, expiresAt: Date.now() + lifetimeMs };
+    this.scheduleRefresh(lifetimeMs * TOKEN_REFRESH_AT);
+    this.applyRole(result.role);
+  }
+
+  private scheduleRefresh(delay: number): void {
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      void this.refreshToken();
+    }, delay);
+  }
+
+  /**
+   * Swap in a new token before the current one expires, without
+   * reconnecting. If the app cannot be reached, try again; if the token
+   * expires first, the server closes with 4401 and the next connection
+   * fetches one.
+   */
+  private async refreshToken(): Promise<void> {
+    if (this.destroyed || this.terminal) return;
+    const result = await this.options.fetchToken();
+    if (this.destroyed || this.terminal) return;
+    if (result.kind === "unavailable") {
+      this.scheduleRefresh(TOKEN_RETRY_MS);
+      return;
+    }
+    if (result.kind !== "ok") return this.onTokenFailure(result);
+    this.acceptToken(result);
+    const socket = this.connection?.socket;
+    if (!this.terminal && socket && socket.readyState === OPEN) socket.send(encodeAuth(result.token));
+  }
+
+  /**
+   * A role from the server (token, role message) or a lower one from
+   * another tab. Losing write access with edits the server never received
+   * stops the provider: the session shows downgrade handling and rebuilds
+   * the local copy as a viewer.
+   */
+  private applyRole(next: Role): void {
+    if (next === this.role) return;
+    const lostWrite = this.role !== "viewer" && next === "viewer";
+    this.role = next;
+    this.options.onAccessLearned?.(next);
+    if (lostWrite && this.hasPendingEdits) return this.stop("downgraded");
+    this.updateStatus();
+  }
+
+  private open(token: string): void {
+    const socket = this.env.createSocket(this.options.url, [SYNC_SUBPROTOCOL, `${AUTH_SUBPROTOCOL_PREFIX}${token}`]);
     socket.binaryType = "arraybuffer";
     const connection: Connection = {
       socket,
@@ -285,27 +431,51 @@ export class SyncProvider {
     const others = [...awareness.getStates().keys()].filter((id) => id !== local.doc.clientID);
     removeAwarenessStates(awareness, others, REMOTE_ORIGIN);
 
-    if (TERMINAL_CLOSE_CODES.has(code)) {
-      this.terminal = code === CLOSE_DELETED ? "deleted" : "not-found";
-      this.updateStatus();
-      return;
-    }
-
-    if (code === CLOSE_MALFORMED || code === CLOSE_TOO_LARGE) {
-      if (this.isolate && unacked.length === 1 && unacked[0].entries.length <= 1) {
-        // Rejected even when sent alone: stop, never skip it.
+    // Every close code is interpreted in one table (close-policy.ts).
+    const action = closeAction(code, {
+      refreshedSinceLastSync: this.refreshedSinceLastSync,
+      viewer: this.role === "viewer",
+      isolating: this.isolate,
+      unackedEntries: unacked.reduce((count, message) => count + message.entries.length, 0),
+    });
+    switch (action) {
+      case "reconnect":
+        this.scheduleReconnect();
+        break;
+      case "refresh-token":
+        // Bounded: a second 4401 before a sync ends the session instead.
+        this.refreshedSinceLastSync = true;
+        this.token = null;
+        this.connect();
+        break;
+      case "isolate":
+        this.isolate = true;
+        this.scheduleReconnect();
+        break;
+      case "halt":
+        // Rejected even when sent alone, or refused for policy: stop, never skip it.
         this.halt();
         return;
-      }
-      this.isolate = true;
+      case "downgraded":
+        // The server refused a write: this user is a viewer now.
+        this.role = "viewer";
+        this.options.onAccessLearned?.("viewer");
+        this.stop("downgraded");
+        return;
+      case "revoked":
+      case "deleted":
+      case "not-found":
+      case "session-ended":
+        this.stop(action);
+        return;
     }
-    this.scheduleReconnect();
     this.updateStatus();
   }
 
   private halt(): void {
     this.halted = true;
     void this.options.local.setHalted(true);
+    this.clearTimers();
     this.closeConnection(1000, "Halted");
     this.updateStatus();
   }
@@ -327,7 +497,7 @@ export class SyncProvider {
       // navigator.onLine false: drop the socket now instead of waiting for it to time out.
       if (this.connection) this.closeConnection(1000, "Offline");
       this.flushing = false;
-    } else if (!this.connection) {
+    } else if (!this.connection && !this.connecting) {
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
       this.attempts = 0;
@@ -366,6 +536,7 @@ export class SyncProvider {
           connection.synced = true;
           this.everSynced = true;
           this.attempts = 0;
+          this.refreshedSinceLastSync = false;
           void local.markSynced();
           void this.flush(connection);
         }
@@ -383,6 +554,12 @@ export class SyncProvider {
         break;
       case "ack":
         this.onAck(connection, message.count);
+        break;
+      case "role":
+        this.applyRole(message.role);
+        break;
+      case "auth":
+        // Only clients send tokens.
         break;
     }
     this.updateStatus();
@@ -428,6 +605,13 @@ export class SyncProvider {
   // Flushing the offline queue
 
   private async flush(connection: Connection): Promise<void> {
+    if (this.role === "viewer") {
+      // A viewer never sends document changes. Edits this device made while
+      // it could still write go through downgrade handling instead.
+      await this.options.local.recount();
+      if (this.hasPendingEdits) this.stop("downgraded");
+      return;
+    }
     this.flushing = true;
     this.updateStatus();
     const { local } = this.options;
@@ -516,6 +700,12 @@ export class SyncProvider {
   // Live editing
 
   private onLocalEdit = (edit: LocalEdit): void => {
+    if (this.role === "viewer") {
+      // The editor is read-only for viewers, so this should not happen. If
+      // it does, the edit must not be sent: stop and rebuild as a viewer.
+      this.stop("downgraded");
+      return;
+    }
     const connection = this.connection;
     if (connection && connection.synced && !this.flushing && !connection.closed) {
       this.sendLive(connection, edit);

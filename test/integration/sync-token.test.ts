@@ -59,6 +59,17 @@ describe("POST /api/documents/:id/sync-token", () => {
     expect((await request("not-a-uuid")).status).toBe(404);
   });
 
+  it("answers 410 for a deleted document, but only to people who had access", async () => {
+    const { tombstoneDocument } = await import("@/server/documents");
+    await tombstoneDocument(world.documentId);
+    for (const person of [world.owner, world.editor, world.viewer]) {
+      as(person);
+      expect((await request(world.documentId)).status).toBe(410);
+    }
+    as(world.stranger);
+    expect((await request(world.documentId)).status).toBe(404);
+  });
+
   it("answers 401 when signed out", async () => {
     as(null);
     expect((await request(world.documentId)).status).toBe(401);

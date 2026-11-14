@@ -32,6 +32,7 @@
     "@tiptap/pm": "3.33.1",
     "@tiptap/react": "3.33.1",
     "@tiptap/starter-kit": "3.33.1",
+    "@tiptap/y-tiptap": "3.3.0",
     "better-auth": "1.7.14",
     "client-only": "^0.0.1",
     "drizzle-orm": "0.45.4",

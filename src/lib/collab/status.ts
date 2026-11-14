@@ -4,6 +4,9 @@
  * match wins.
  *
  *  1. deleted / not-found   terminal; the editor is replaced by a message
+ *     revoked               terminal; access removed (message, Download a copy)
+ *     downgraded            sync stopped; the copy is rebuilt as a viewer
+ *     session-ended         sync stopped until the user signs in again (banner)
  *  2. halted                the server refused an edit; sync stopped (banner)
  *  3. saving                a local edit has waited over 1s to be written on
  *                           the device (or cannot be, because storage is full)
@@ -17,9 +20,11 @@
  *  9. saving                connected, an acknowledgement is over 1s late
  * 10. saved                 connected, everything acknowledged
  */
+/** Why a provider stopped for good. */
+export type StopReason = "deleted" | "not-found" | "revoked" | "downgraded" | "session-ended";
+
 export type SyncStatus =
-  | "deleted"
-  | "not-found"
+  | StopReason
   | "halted"
   | "saving"
   | "saved-on-device"
@@ -30,7 +35,7 @@ export type SyncStatus =
   | "saved";
 
 export interface StatusInputs {
-  terminal: "deleted" | "not-found" | null;
+  terminal: StopReason | null;
   halted: boolean;
   online: boolean;
   /** Socket open and the server's Step 2 received on it. */
@@ -66,6 +71,9 @@ export function computeStatus(input: StatusInputs): SyncStatus {
 export const STATUS_LABELS: Record<SyncStatus, string> = {
   deleted: "",
   "not-found": "",
+  revoked: "",
+  downgraded: "",
+  "session-ended": "Not syncing",
   halted: "",
   saving: "Saving",
   "saved-on-device": "Saved on this device",

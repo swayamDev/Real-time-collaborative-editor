@@ -17,6 +17,8 @@ interface SharedTitleFieldProps {
   fallbackTitle: string;
   /** Read-only until the first sync, so a first edit cannot race the seeded title. */
   synced: boolean;
+  /** The user may not rename (a viewer). Blocks typing, paste, drop and undo. */
+  readOnly: boolean;
   autoFocus: boolean;
   onTitleChange: (title: string) => void;
   /** Enter, or ArrowDown at the end: move into the body. */
@@ -29,7 +31,7 @@ interface SharedTitleFieldProps {
  * your own title edits.
  */
 export const SharedTitleField = forwardRef<HTMLTextAreaElement, SharedTitleFieldProps>(function SharedTitleField(
-  { doc, fallbackTitle, synced, autoFocus, onTitleChange, onExit },
+  { doc, fallbackTitle, synced, readOnly, autoFocus, onTitleChange, onExit },
   forwardedRef,
 ) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -80,14 +82,19 @@ export const SharedTitleField = forwardRef<HTMLTextAreaElement, SharedTitleField
   }, [display]);
 
   useLayoutEffect(() => {
-    if (autoFocus && synced) ref.current?.focus();
-  }, [autoFocus, synced]);
+    if (autoFocus && synced && !readOnly) ref.current?.focus();
+  }, [autoFocus, synced, readOnly]);
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       const field = event.currentTarget;
       const mod = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
+      if (readOnly && mod && (key === "z" || key === "y")) {
+        // The title undo manager writes to the shared title directly.
+        event.preventDefault();
+        return;
+      }
       if (mod && key === "z") {
         event.preventDefault();
         if (event.shiftKey) undo.redo();
@@ -105,7 +112,7 @@ export const SharedTitleField = forwardRef<HTMLTextAreaElement, SharedTitleField
         onExit();
       }
     },
-    [undo, onExit],
+    [undo, onExit, readOnly],
   );
 
   return (
@@ -113,17 +120,21 @@ export const SharedTitleField = forwardRef<HTMLTextAreaElement, SharedTitleField
       ref={ref}
       rows={1}
       value={display}
-      readOnly={!synced}
+      readOnly={!synced || readOnly}
+      aria-readonly={readOnly || undefined}
       maxLength={TITLE_MAX_LENGTH}
       placeholder="Untitled"
       aria-label="Title"
       data-testid="title"
       spellCheck
       onChange={(event) => {
+        if (readOnly) return;
         applyTitleInput(text, event.target.value);
         setValue(text.toString());
       }}
       onKeyDown={onKeyDown}
+      onDrop={readOnly ? (event) => event.preventDefault() : undefined}
+      onPaste={readOnly ? (event) => event.preventDefault() : undefined}
       className="doc-title block w-full resize-none overflow-hidden bg-transparent outline-none"
     />
   );

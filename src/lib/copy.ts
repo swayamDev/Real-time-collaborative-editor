@@ -7,3 +7,8 @@ export const STORAGE_FULL = "This device is out of storage for Brahma. Your edit
 export const DELETED_WHILE_OFFLINE = "This document was deleted while you were offline.";
 export const SAVE_COPY_FAILED = "Couldn't save a copy. Try again when you're online.";
 export const RATE_LIMITED = "Too many attempts. Try again in a few minutes.";
+export const ACCESS_REVOKED = "You no longer have access to this document.";
+export const ACCESS_DOWNGRADED =
+  "You can now only view this document. Edits you made offline weren't synced. Download a copy to keep them.";
+export const SESSION_ENDED = "You were signed out, so this document stopped syncing. Your edits are kept on this device.";
+export const VIEW_ONLY = "View only";

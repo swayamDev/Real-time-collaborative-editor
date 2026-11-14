@@ -14,6 +14,8 @@ type TabMessage = { type: "update"; update: Uint8Array } | { type: "hello"; stat
 export class TabChannel {
   private readonly channel: BroadcastChannel;
   private closed = false;
+  /** Off for viewers: their copy only takes changes from the server. */
+  private acceptEdits = true;
 
   constructor(
     docId: string,
@@ -23,6 +25,14 @@ export class TabChannel {
     this.channel.onmessage = (event: MessageEvent<TabMessage>) => this.onMessage(event.data);
     doc.on("update", this.onUpdate);
     this.post({ type: "hello", stateVector: Y.encodeStateVector(doc) });
+  }
+
+  /**
+   * A viewer must not pick up edits another tab made but never synced (a
+   * stale tab, or one that lost write access); the server is its only source.
+   */
+  setAcceptEdits(accept: boolean): void {
+    this.acceptEdits = accept;
   }
 
   close(): void {
@@ -38,7 +48,7 @@ export class TabChannel {
   };
 
   private onMessage(message: TabMessage): void {
-    if (this.closed || !message) return;
+    if (this.closed || !message || !this.acceptEdits) return;
     if (message.type === "update" && message.update instanceof Uint8Array) {
       Y.applyUpdate(this.doc, message.update, TAB_ORIGIN);
     } else if (message.type === "hello" && message.stateVector instanceof Uint8Array) {

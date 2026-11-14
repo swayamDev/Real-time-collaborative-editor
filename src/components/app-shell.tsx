@@ -42,6 +42,8 @@ interface DocumentsContextValue {
   remove: (id: string) => void;
   /** Make sure a document is listed, e.g. one just created or opened by URL. */
   ensure: (document: DocumentSummary) => void;
+  /** The current user's role changed while the document was open. */
+  setRole: (id: string, role: DocumentSummary["role"]) => void;
 }
 
 const ShellContext = createContext<ShellContextValue | null>(null);
@@ -107,9 +109,13 @@ export function AppShell({
     );
   }, []);
 
+  const setRole = useCallback((id: string, role: DocumentSummary["role"]) => {
+    setDocuments((docs) => docs.map((doc) => (doc.id === id && doc.role !== role ? { ...doc, role } : doc)));
+  }, []);
+
   const documentsValue = useMemo(
-    () => ({ documents, setTitle, touch, remove, ensure }),
-    [documents, setTitle, touch, remove, ensure],
+    () => ({ documents, setTitle, touch, remove, ensure, setRole }),
+    [documents, setTitle, touch, remove, ensure, setRole],
   );
 
   // Theme
