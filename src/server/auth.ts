@@ -9,7 +9,7 @@ import { normalizeEmail } from "@/lib/email-address";
 import { eq } from "drizzle-orm";
 import { sendEmail } from "./email";
 import { claimInvites } from "./sharing";
-import { applyAccessChanges } from "./sync";
+import { scheduleAccessChanges } from "./sync";
 
 const baseURL = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 
@@ -51,7 +51,7 @@ export const auth = betterAuth({
             .where(eq(authSchema.user.id, session.userId));
           if (!account?.verified) return;
           const claimed = await claimInvites(session.userId, account.email);
-          for (const { documentId, change } of claimed) await applyAccessChanges(documentId, [change]);
+          for (const { documentId, change } of claimed) scheduleAccessChanges(documentId, [change]);
         },
       },
     },

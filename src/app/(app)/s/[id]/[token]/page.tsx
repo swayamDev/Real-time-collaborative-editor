@@ -5,7 +5,7 @@ import { TopBar } from "@/components/top-bar";
 import { isDocumentId } from "@/lib/ids";
 import { requireUserOrRedirect } from "@/server/session";
 import { joinByLink } from "@/server/sharing";
-import { applyAccessChanges } from "@/server/sync";
+import { scheduleAccessChanges } from "@/server/sync";
 
 export const metadata: Metadata = { title: "Shared document" };
 
@@ -16,7 +16,7 @@ export default async function ShareLinkPage({ params }: PageProps<"/s/[id]/[toke
   if (isDocumentId(id)) {
     const result = await joinByLink(id, token, user.id);
     if (result.ok) {
-      if (result.change) await applyAccessChanges(id, [result.change]);
+      if (result.change) scheduleAccessChanges(id, [result.change]);
       redirect(`/d/${id}`);
     }
   }

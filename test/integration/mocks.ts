@@ -34,7 +34,7 @@ export const syncModule = () => ({
   deleteInSync: async (...args: unknown[]) => {
     syncCalls.push({ call: "delete", args });
   },
-  applyAccessChanges: async (...args: unknown[]) => {
-    syncCalls.push({ call: "access", args });
+  scheduleAccessChanges: (documentId: string, changes: unknown[]) => {
+    if (changes.length > 0) syncCalls.push({ call: "access", args: [documentId, changes] });
   },
 });

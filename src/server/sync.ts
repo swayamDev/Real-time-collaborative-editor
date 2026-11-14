@@ -1,4 +1,5 @@
 import "server-only";
+import { after } from "next/server";
 
 /**
  * Calls to the sync server's internal API. The Durable Object is the only
@@ -61,6 +62,19 @@ export interface SyncAccessChange {
   userId: string;
   role: "editor" | "viewer" | null;
   accessVersion: number;
+}
+
+/**
+ * Deliver access changes after the response is sent, so the owner's action
+ * never waits on the sync server or its retries. Two quick changes may be
+ * delivered in either order; the room keeps the one with the higher access
+ * version.
+ */
+export function scheduleAccessChanges(documentId: string, changes: SyncAccessChange[]): void {
+  if (changes.length === 0) return;
+  after(async () => {
+    await applyAccessChanges(documentId, changes);
+  });
 }
 
 /** Waits before each retry of an access change. Three attempts in all. */

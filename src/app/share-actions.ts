@@ -14,7 +14,7 @@ import {
   setMemberRole,
   setShareLink,
 } from "@/server/sharing";
-import { applyAccessChanges } from "@/server/sync";
+import { scheduleAccessChanges } from "@/server/sync";
 
 type Result<T = undefined> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -42,7 +42,7 @@ export async function inviteAction(documentId: unknown, email: unknown, role: un
 
   const result = await inviteByEmail(documentId as string, guard.value.user, email, parsedRole);
   if (!result.ok) return result;
-  if (result.change) await applyAccessChanges(documentId as string, [result.change]);
+  if (result.change) scheduleAccessChanges(documentId as string, [result.change]);
   return { ok: true, value: await getSharing(documentId as string) };
 }
 
@@ -52,7 +52,7 @@ export async function changeRoleAction(documentId: unknown, userId: unknown, rol
   const parsedRole = parseRole(role);
   if (typeof userId !== "string" || !parsedRole) return { ok: false, error: "Choose a role." };
   const change = await setMemberRole(documentId as string, userId, parsedRole);
-  if (change) await applyAccessChanges(documentId as string, [change]);
+  if (change) scheduleAccessChanges(documentId as string, [change]);
   return { ok: true, value: await getSharing(documentId as string) };
 }
 
@@ -61,7 +61,7 @@ export async function removeMemberAction(documentId: unknown, userId: unknown): 
   if (!guard.ok) return guard;
   if (typeof userId !== "string") return { ok: false, error: "Choose a person." };
   const change = await removeMember(documentId as string, userId);
-  if (change) await applyAccessChanges(documentId as string, [change]);
+  if (change) scheduleAccessChanges(documentId as string, [change]);
   return { ok: true, value: await getSharing(documentId as string) };
 }
 
@@ -79,6 +79,6 @@ export async function setShareLinkAction(documentId: unknown, enabled: unknown, 
   const parsedRole = parseRole(role);
   if (typeof enabled !== "boolean" || !parsedRole) return { ok: false, error: "Choose a role." };
   const changes = await setShareLink(documentId as string, { enabled, role: parsedRole });
-  if (changes.length > 0) await applyAccessChanges(documentId as string, changes);
+  scheduleAccessChanges(documentId as string, changes);
   return { ok: true, value: await getSharing(documentId as string) };
 }

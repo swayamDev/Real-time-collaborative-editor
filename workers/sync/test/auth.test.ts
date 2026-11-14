@@ -249,6 +249,25 @@ describe("stale tokens after an access change", () => {
     expect(fresh.closed).toBeNull();
   });
 
+  it("ends in the newer role when two quick changes arrive in reverse order", async () => {
+    const id = seed();
+    const client = await joined(id);
+    // The owner made Ada a viewer (version 2), then an editor again (version 3);
+    // delivery raced and version 3 arrived first.
+    await changeAccess(id, [{ userId: EDITOR.sub, role: "editor", accessVersion: 3 }]);
+    await changeAccess(id, [{ userId: EDITOR.sub, role: "viewer", accessVersion: 2 }]);
+    await sleep(100);
+    expect(client.last("role")).toBeUndefined();
+
+    const acks = client.count("ack");
+    client.edit((doc) => doc.getText("body").insert(0, "still an editor"));
+    await client.until(() => client.count("ack") > acks, "acked");
+    expect(client.closed).toBeNull();
+    // And a reconnect with a token from between the two changes is capped to the newer one.
+    const between = await joined(id, { ...EDITOR, role: "viewer", av: 2 });
+    await between.until(() => between.last("role")?.role === "editor", "raised to the newer role");
+  });
+
   it("ignores an access change older than one already applied", async () => {
     const id = seed();
     await changeAccess(id, [{ userId: EDITOR.sub, role: "editor", accessVersion: 5 }]);

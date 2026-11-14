@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { applyAccessChanges } from "@/server/sync";
+import { applyAccessChanges, scheduleAccessChanges } from "@/server/sync";
+
+/** Work registered with next/server after(), run when the test says the response is sent. */
+const afterResponse: Array<() => Promise<void>> = [];
+vi.mock("next/server", () => ({ after: (task: () => Promise<void>) => afterResponse.push(task) }));
 
 const change = { userId: "user-1", role: "viewer" as const, accessVersion: 3 };
 const noSleep = async () => {};
@@ -24,6 +28,24 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe("scheduleAccessChanges", () => {
+  it("delivers only after the response, so the owner's action never waits on the sync server", async () => {
+    answer(204);
+    afterResponse.length = 0;
+    scheduleAccessChanges("doc-1", [change]);
+    expect(calls).toHaveLength(0);
+    expect(afterResponse).toHaveLength(1);
+    await afterResponse[0]();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("schedules nothing for no changes", () => {
+    afterResponse.length = 0;
+    scheduleAccessChanges("doc-1", []);
+    expect(afterResponse).toHaveLength(0);
+  });
 });
 
 describe("applyAccessChanges", () => {
