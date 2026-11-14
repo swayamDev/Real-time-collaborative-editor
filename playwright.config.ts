@@ -44,6 +44,12 @@ export default defineConfig({
       SYNC_TOKEN_PRIVATE_KEY: auth.privateJwk,
       // Magic links land in test-results/outbox/<email>.txt.
       EMAIL_TRANSPORT: "file",
+      // Tests sign in as different people from different addresses (see
+      // e2e/auth.ts), so this run trusts X-Forwarded-For. Production trusts
+      // no header unless a proxy that sets it is configured.
+      AUTH_CLIENT_IP_HEADER: "x-forwarded-for",
+      // Many sign-ins per run; the site-wide ceiling is for real traffic.
+      MAGIC_LINK_HOURLY_LIMIT: "100000",
     },
   },
 });

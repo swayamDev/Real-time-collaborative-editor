@@ -1,5 +1,6 @@
 import "server-only";
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
 import { magicLink } from "better-auth/plugins/magic-link";
@@ -7,7 +8,9 @@ import { db } from "@/db/client";
 import * as authSchema from "@/db/auth-schema";
 import { normalizeEmail } from "@/lib/email-address";
 import { eq } from "drizzle-orm";
+import { clientIpOptions } from "./client-ip";
 import { sendEmail } from "./email";
+import { allow } from "./rate-limit";
 import { claimInvites } from "./sharing";
 import { scheduleAccessChanges } from "./sync";
 
@@ -37,6 +40,8 @@ export const auth = betterAuth({
     max: 100,
   },
   advanced: {
+    // No client address header is trusted unless configured (see client-ip.ts).
+    ipAddress: clientIpOptions(),
     // HttpOnly, SameSite=Lax by default; Secure whenever the base URL is https.
     useSecureCookies: baseURL.startsWith("https://"),
   },
@@ -61,8 +66,14 @@ export const auth = betterAuth({
       expiresIn: 60 * 10,
       storeToken: "hashed",
       sendMagicLink: async ({ email, url }) => {
+        // Limits that hold whatever headers a client sends: per address, so
+        // one inbox cannot be flooded, and site wide, to cap sending.
+        const to = normalizeEmail(email);
+        if (!(await allow("magicLinkPerEmail", to)) || !(await allow("magicLinkSiteWide", "all"))) {
+          throw new APIError("TOO_MANY_REQUESTS", { message: "Too many sign-in links. Try again later." });
+        }
         await sendEmail({
-          to: normalizeEmail(email),
+          to,
           subject: "Your Brahma sign-in link",
           text: `Open this link to sign in to Brahma. It works once and expires in 10 minutes.\n\n${url}\n\nIf you did not ask for it, you can ignore this email.`,
         });

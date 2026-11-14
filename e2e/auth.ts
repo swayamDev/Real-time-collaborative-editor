@@ -36,7 +36,9 @@ function clientAddress(): string {
  * Sign in through the real magic-link flow, reading the email from the
  * outbox. Each sign-in comes from its own client address, as different
  * people would, so the sign-in rate limit (per address) applies per test
- * rather than to the whole suite.
+ * rather than to the whole suite. The address travels in X-Forwarded-For,
+ * which only the end-to-end server is configured to trust
+ * (AUTH_CLIENT_IP_HEADER in playwright.config.ts).
  */
 export async function signIn(page: Page, email: string): Promise<void> {
   await page.context().setExtraHTTPHeaders({ "x-forwarded-for": clientAddress() });

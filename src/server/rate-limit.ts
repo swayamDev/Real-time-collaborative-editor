@@ -13,6 +13,13 @@ export const LIMITS = {
   invite: { max: 30, windowSeconds: 60 * 60 },
   /** Per email address, on top of Better Auth's per-IP limit, so one inbox cannot be flooded. */
   magicLinkPerEmail: { max: 5, windowSeconds: 60 * 60 },
+  /**
+   * Every sign-in link sent, site wide: a ceiling on email sending that no
+   * header can dodge. Raise it with traffic; the per-address limit behind a
+   * trusted proxy (client-ip.ts) is the finer control. MAGIC_LINK_HOURLY_LIMIT
+   * overrides it.
+   */
+  magicLinkSiteWide: { max: Number(process.env.MAGIC_LINK_HOURLY_LIMIT) || 300, windowSeconds: 60 * 60 },
   /** Per user and document: several tabs with reconnects stay well under it. */
   syncToken: { max: 600, windowSeconds: 60 * 60 },
 } satisfies Record<string, Limit>;
