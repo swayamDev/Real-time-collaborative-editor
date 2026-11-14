@@ -3,3 +3,6 @@
 DATABASE_URL=postgres://brahma:brahma@localhost:5432/brahma
 # Must match SYNC_INTERNAL_SECRET in the Next app's .env.local.
 SYNC_INTERNAL_SECRET=change-me-local-only
+# Public keys that verify sync tokens, as a JWKS: {"keys":[...]}. From `pnpm keys:sync`.
+# The Worker never holds the private key, so it cannot mint tokens.
+SYNC_TOKEN_PUBLIC_KEYS=

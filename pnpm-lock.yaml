@@ -289,6 +289,10 @@ importers:
         version: 5.1.0(@types/node@20.19.43)(vite@8.3.8(@types/node@20.19.43)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
   packages/protocol:
+    dependencies:
+      jose:
+        specifier: 6.2.14
+        version: 6.2.14
     devDependencies:
       lib0:
         specifier: 0.2.120

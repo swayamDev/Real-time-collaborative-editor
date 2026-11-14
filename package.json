@@ -18,7 +18,8 @@
     "test:sync": "pnpm --filter @brahma/sync test",
     "dev:sync": "pnpm --filter @brahma/sync dev",
     "db:claim-local": "node scripts/claim-local.mjs",
-    "test:integration": "vitest run -c vitest.integration.config.mts"
+    "test:integration": "vitest run -c vitest.integration.config.mts",
+    "keys:sync": "node scripts/sync-keys.mjs"
   },
   "dependencies": {
     "@brahma/protocol": "workspace:*",
