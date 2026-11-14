@@ -60,6 +60,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "fake-indexeddb": "6.2.7",
+    "jsdom": "26.1.0",
     "tailwindcss": "4.3.3",
     "tree-kill": "1.2.2",
     "tsx": "^4.23.15",

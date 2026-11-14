@@ -11,6 +11,20 @@ import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
 import { caretColor, caretName, onCollabVar } from "@/lib/collab/presence";
 import { CONTENT_FIELD } from "@/lib/collab/yjs";
+import { isSafeHref } from "@/lib/safe-href";
+
+/** A bare domain such as example.com/path, which autolink completes with the default protocol. */
+const BARE_DOMAIN = /^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+(?:[/?#]|$)/i;
+
+/**
+ * Links may only point to http, https or mailto, however they arrive:
+ * typed, pasted, autolinked or in raw shared data from a collaborator. A
+ * link that fails is rendered without a usable href.
+ */
+function isAllowedLink(url: string, context: { defaultProtocol: string }): boolean {
+  if (isSafeHref(url)) return true;
+  return BARE_DOMAIN.test(url) && isSafeHref(`${context.defaultProtocol}://${url}`);
+}
 
 interface EditorShortcutOptions {
   /** Mod+K: open the link field in the floating toolbar. */
@@ -163,6 +177,7 @@ export function contentExtensions(): Extensions {
         autolink: true,
         linkOnPaste: true,
         defaultProtocol: "https",
+        isAllowedUri: isAllowedLink,
         HTMLAttributes: { rel: "noopener noreferrer nofollow", target: null },
       },
       dropcursor: { color: "var(--indigo)", width: 2 },
@@ -182,6 +197,11 @@ export function buildExtensions(
     ...contentExtensions(),
     ReadOnlyGuard.configure({ state: readOnly }),
     Placeholder.configure({ placeholder: () => (readOnly.current ? "" : "Start writing") }),
+    // Shared content is untrusted. The binding removes an element or text it
+    // cannot fit to the schema (an unknown node or mark from a raw update),
+    // and editing goes on; for editors that removal syncs, so every client
+    // converges. Viewers' editors are bound to a mirror (collab/mirror.ts),
+    // so for them nothing is ever written back.
     Collaboration.configure({ document: ydoc, field: CONTENT_FIELD }),
     CollaborationCaret.configure({
       // The extension only reads `provider.awareness`.

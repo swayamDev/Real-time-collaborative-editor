@@ -26,6 +26,7 @@ import { type DocumentCopy, documentCopy, downloadCopy } from "./document-copy";
 import { DeletedDocument } from "./deleted-document";
 import { EditorNotice } from "./editor-notice";
 import { PresenceBar } from "./presence-bar";
+import { createMirror } from "@/lib/collab/mirror";
 import { ReadOnlyState, buildExtensions } from "./extensions";
 import { SharedTitleField } from "./shared-title-field";
 import { SyncStatus } from "./sync-status";
@@ -272,7 +273,8 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, 
           )}
           {session ? (
             <CollaborativeBody
-              key={session.local.doc.guid}
+              // A role change rebuilds the editor on the real document or a mirror.
+              key={`${session.local.doc.guid}:${readOnlyBody ? "view" : "edit"}`}
               doc={session.local.doc}
               session={session}
               readOnly={readOnlyBody}
@@ -307,11 +309,15 @@ function CollaborativeBody({
   titleRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
   const [linkMode, setLinkMode] = useState(false);
+  // Viewers' editors work on a one-way mirror, so the editor binding can
+  // never write to the real document (see collab/mirror.ts).
+  const [mirror] = useState(() => (readOnly ? createMirror(doc) : null));
+  useEffect(() => mirror?.follow(), [mirror]);
   // Read by the editor's read-only guard on every transaction.
   const [readOnlyState] = useState(() => new ReadOnlyState(readOnly));
   const [extensions] = useState(() =>
     buildExtensions(
-      doc,
+      mirror?.doc ?? doc,
       {
         onRequestLink: () => setLinkMode(true),
         onFocusToolbar: () =>
