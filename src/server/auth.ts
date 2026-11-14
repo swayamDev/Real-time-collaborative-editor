@@ -40,6 +40,10 @@ export const auth = betterAuth({
     max: 100,
   },
   advanced: {
+    // CSRF: requests carrying cookies, and redirect targets, must come from
+    // trustedOrigins. Better Auth skips this check under NODE_ENV=test unless
+    // it is set, so it is set explicitly and the tests check the real thing.
+    disableOriginCheck: false,
     // No client address header is trusted unless configured (see client-ip.ts).
     ipAddress: clientIpOptions(),
     // HttpOnly, SameSite=Lax by default; Secure whenever the base URL is https.
