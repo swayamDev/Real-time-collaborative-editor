@@ -2,6 +2,8 @@ import { userDatabase } from "../device-data";
 import { LocalStore } from "./local-store";
 
 const stores = new Map<string, Promise<LocalStore | null>>();
+/** Set once this page has removed the user's data: nothing may reopen it. */
+let locked = false;
 
 /**
  * The signed-in user's device store, opened once per page. Each user has
@@ -14,6 +16,7 @@ const stores = new Map<string, Promise<LocalStore | null>>();
  * server render.
  */
 export function getLocalStore(userId: string): Promise<LocalStore | null> {
+  if (locked) return Promise.resolve(null);
   let store = stores.get(userId);
   if (!store) {
     store = LocalStore.open(indexedDB, userDatabase(userId)).catch((error: unknown) => {
@@ -25,8 +28,12 @@ export function getLocalStore(userId: string): Promise<LocalStore | null> {
   return store;
 }
 
-/** Close every open store, so its database can be deleted. */
-export async function closeLocalStores(): Promise<void> {
+/**
+ * Close every open store, so its database can be deleted. With `lock`, no
+ * store opens again in this page (it would recreate the database).
+ */
+export async function closeLocalStores({ lock = false } = {}): Promise<void> {
+  if (lock) locked = true;
   const open = [...stores.values()];
   stores.clear();
   for (const store of open) (await store)?.close();

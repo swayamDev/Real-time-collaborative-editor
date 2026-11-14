@@ -10,6 +10,8 @@ interface ConfirmDialogProps {
   pendingLabel: string;
   pending: boolean;
   error?: string | null;
+  /** A second choice between Cancel and the main action. */
+  secondaryAction?: { label: string; onClick: () => void };
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -23,6 +25,7 @@ export function ConfirmDialog({
   pendingLabel,
   pending,
   error,
+  secondaryAction,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -63,7 +66,7 @@ export function ConfirmDialog({
           {error}
         </p>
       )}
-      <div className="mt-6 flex justify-end gap-2">
+      <div className="mt-6 flex flex-wrap justify-end gap-2">
         <button
           ref={cancelRef}
           type="button"
@@ -73,6 +76,16 @@ export function ConfirmDialog({
         >
           Cancel
         </button>
+        {secondaryAction && (
+          <button
+            type="button"
+            onClick={secondaryAction.onClick}
+            disabled={pending}
+            className="h-8 rounded-sm border border-hairline-strong px-3 text-ui font-medium text-ink transition-colors duration-100 hover:bg-hover disabled:opacity-70"
+          >
+            {secondaryAction.label}
+          </button>
+        )}
         <button
           type="button"
           onClick={onConfirm}

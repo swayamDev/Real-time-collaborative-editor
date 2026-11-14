@@ -13,7 +13,8 @@ export async function createDocument(page: Page): Promise<string> {
   const before = page.url();
   await page.getByRole("button", { name: "New document" }).first().click();
   await page.waitForURL((url) => url.href !== before && /\/d\/[0-9a-f-]{36}$/.test(url.pathname));
-  await expect(page.getByTestId("title")).toBeFocused();
+  // Focus waits for the first sync (token, socket, handshake).
+  await expect(page.getByTestId("title")).toBeFocused({ timeout: 15_000 });
   await expect(page.getByTestId("editor")).toBeVisible();
   return page.url().split("/d/")[1];
 }
@@ -58,7 +59,11 @@ export async function expectReadyOffline(page: Page): Promise<void> {
   // A navigation that started while the worker was still activating (for
   // example the sign-in redirect) stays uncontrolled for that page's life.
   // The next load is controlled; tests that go offline need this one to be.
-  if (!(await page.evaluate(() => Boolean(navigator.serviceWorker.controller)))) await page.reload();
+  if (!(await page.evaluate(() => Boolean(navigator.serviceWorker.controller)))) {
+    await page.reload();
+    // Hydrated and synced again before the test goes on to click anything.
+    await expect(page.getByTestId("sync-status")).toHaveAttribute("data-status", "saved", { timeout: 15_000 });
+  }
   await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller), undefined, { timeout: 15_000 });
   const path = new URL(page.url()).pathname;
   await page.waitForFunction(async (url) => Boolean(await caches.match(url)), path, { timeout: 15_000 });

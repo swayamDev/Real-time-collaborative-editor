@@ -13,7 +13,15 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
 import { getLocalStore } from "@/lib/collab/device-store";
 import { pruneInaccessible } from "@/lib/collab/prune";
-import { SESSION_CHANNEL, type SessionMessage, claimDevice } from "@/lib/device-data";
+import { authClient } from "@/lib/auth-client";
+import { DATA_REMOVED, DATA_REMOVED_DETAIL } from "@/lib/copy";
+import {
+  SESSION_CHANNEL,
+  type SessionMessage,
+  claimDevice,
+  clearPendingSignOut,
+  pendingSignOut,
+} from "@/lib/device-data";
 import { SIDEBAR_COOKIE, THEME_COOKIE, type Theme, writePreferenceCookie } from "@/lib/preferences";
 import type { DocumentSummary } from "@/server/documents";
 import { Sidebar } from "./sidebar";
@@ -106,9 +114,24 @@ export function AppShell({
   // data (sign-out may never have run), then drop local copies of documents
   // this user can no longer open. Pruning trusts the server list only online.
   const [accessibleAtLoad] = useState(() => new Set(serverDocuments.map((doc) => doc.id)));
+  // This user's data was removed from the device while sign-out could not
+  // reach the server: show only that, and finish signing out once online.
+  const [removed, setRemoved] = useState(false);
   useEffect(() => {
     let cancelled = false;
+    const finishSignOut = async () => {
+      if (!navigator.onLine) return;
+      const result = await authClient.signOut().catch(() => ({ error: true }));
+      if (!result || result.error) return;
+      clearPendingSignOut();
+      window.location.replace("/sign-in");
+    };
     void (async () => {
+      if (pendingSignOut() === user.id) {
+        setRemoved(true);
+        await finishSignOut();
+        return;
+      }
       await claimDevice(user.id).catch(() => {});
       if (cancelled || !navigator.onLine) return;
       const store = await getLocalStore(user.id);
@@ -120,12 +143,20 @@ export function AppShell({
       channel.onmessage = (event: MessageEvent<SessionMessage>) => {
         const message = event.data;
         if (message?.type === "user" && message.userId !== user.id) window.location.reload();
-        if (message?.type === "signed-out" && message.userId === user.id) window.location.replace("/sign-in");
+        if (message?.type === "signed-out" && message.userId === user.id) {
+          if (pendingSignOut() === user.id) setRemoved(true);
+          else window.location.replace("/sign-in");
+        }
       };
     }
+    const onOnline = () => {
+      if (pendingSignOut() === user.id) void finishSignOut();
+    };
+    window.addEventListener("online", onOnline);
     return () => {
       cancelled = true;
       channel?.close();
+      window.removeEventListener("online", onOnline);
     };
   }, [user.id, accessibleAtLoad]);
 
@@ -206,6 +237,17 @@ export function AppShell({
     () => ({ user, theme, setTheme, sidebarCollapsed, toggleSidebar, openDrawer, closeDrawer }),
     [user, theme, setTheme, sidebarCollapsed, toggleSidebar, openDrawer, closeDrawer],
   );
+
+  if (removed) {
+    return (
+      <main id="main" className="flex h-dvh items-center justify-center bg-paper px-4" data-testid="data-removed">
+        <div className="max-w-md text-center">
+          <h1 className="font-ui text-[20px] leading-7 font-semibold text-ink">{DATA_REMOVED}</h1>
+          <p className="mt-2 text-ui text-ink-muted">{DATA_REMOVED_DETAIL}</p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <ShellContext.Provider value={shellValue}>

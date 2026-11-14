@@ -42,6 +42,39 @@ test("signing out deletes the user's data and signs out their other tabs", async
   await context.close();
 });
 
+test("when sign-out cannot reach the server, the user can still remove their data from the device", async ({ browser }) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await signIn(page, uniqueEmail("dora"));
+  const title = uniqueTitle("Dora private");
+  await createDocument(page);
+  await page.getByTestId("title").fill(title);
+  await page.getByTestId("title").press("Enter");
+  await page.keyboard.type("Kept for offline use.");
+  await expectSaved(page);
+  await expectReadyOffline(page);
+
+  await context.setOffline(true);
+  await page.getByTestId("account-menu").click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Couldn't sign out");
+  await dialog.getByRole("button", { name: "Remove my data from this device" }).click();
+
+  await expect(page.getByTestId("data-removed")).toContainText("Your data was removed from this device.");
+  await expect(page.getByTestId("data-removed")).toContainText("signed out when this device is back online");
+  await expect(page.getByText(title)).toHaveCount(0);
+  await expect.poll(() => databases(page)).toEqual([]);
+  await expect.poll(() => pageCaches(page)).toEqual([]);
+
+  // Back online, the session ends.
+  await context.setOffline(false);
+  await page.waitForURL(/\/sign-in/, { timeout: 15_000 });
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/sign-in/);
+  await context.close();
+});
+
 test("a new user on the device never sees the previous user's data, even without sign-out", async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();

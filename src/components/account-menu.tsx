@@ -4,8 +4,8 @@ import { initials } from "@brahma/protocol";
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { closeLocalStores, getLocalStore } from "@/lib/collab/device-store";
-import { SIGN_OUT_FAILED, SIGN_OUT_UNSYNCED } from "@/lib/copy";
-import { clearDevice } from "@/lib/device-data";
+import { REMOVE_FROM_DEVICE, SIGN_OUT_FAILED, SIGN_OUT_UNSYNCED } from "@/lib/copy";
+import { clearDevice, markPendingSignOut } from "@/lib/device-data";
 import { useShell } from "./app-shell";
 import { ConfirmDialog } from "./confirm-dialog";
 import { Menu } from "./menu";
@@ -31,9 +31,24 @@ export function AccountMenu() {
       setDialog("failed");
       return;
     }
-    await closeLocalStores();
+    await closeLocalStores({ lock: true });
     await clearDevice(user.id).catch(() => {});
     window.location.replace("/sign-in");
+  };
+
+  /**
+   * Sign-out could not reach the server: delete this user's data from the
+   * device now, and finish signing out once the device is back online
+   * (AppShell). Until then, or until the session expires, the session
+   * cookie still exists, but nothing of the user's is left to show.
+   */
+  const removeFromDevice = async () => {
+    setPending(true);
+    markPendingSignOut(user.id);
+    await closeLocalStores({ lock: true });
+    await clearDevice(user.id).catch(() => {});
+    setPending(false);
+    setDialog(null);
   };
 
   const requestSignOut = async () => {
@@ -67,6 +82,7 @@ export function AccountMenu() {
         confirmLabel={dialog === "failed" ? "Try again" : "Sign out"}
         pendingLabel="Signing out"
         pending={pending}
+        secondaryAction={dialog === "failed" ? { label: REMOVE_FROM_DEVICE, onClick: () => void removeFromDevice() } : undefined}
         onConfirm={() => void signOut()}
         onCancel={() => setDialog(null)}
       />

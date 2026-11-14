@@ -14,4 +14,9 @@ export const SESSION_ENDED = "You were signed out, so this document stopped sync
 export const VIEW_ONLY = "View only";
 export const SIGN_OUT_UNSYNCED =
   "Some edits on this device haven't synced yet. Signing out deletes them from this device.";
-export const SIGN_OUT_FAILED = "Couldn't reach Brahma to sign you out. Check your connection and try again.";
+export const SIGN_OUT_FAILED =
+  "Couldn't reach Brahma to sign you out. Try again when you're online, or remove your data from this device now.";
+export const REMOVE_FROM_DEVICE = "Remove my data from this device";
+export const DATA_REMOVED = "Your data was removed from this device.";
+export const DATA_REMOVED_DETAIL =
+  "You'll be signed out when this device is back online, or when your session expires.";

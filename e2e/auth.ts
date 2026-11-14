@@ -46,7 +46,7 @@ export async function signIn(page: Page, email: string): Promise<void> {
   await page.goto("/sign-in");
   await page.getByLabel("Email").fill(email);
   await page.getByRole("button", { name: "Email me a sign-in link" }).click();
-  await expect(page.getByTestId("magic-link-sent")).toBeVisible();
+  await expect(page.getByTestId("magic-link-sent")).toBeVisible({ timeout: 15_000 });
   await page.goto(await magicLink(email));
   await expect(page.getByTestId("account-menu")).toBeVisible({ timeout: 30_000 });
 }

@@ -12,6 +12,8 @@
  */
 
 export const LEGACY_DATABASE = "brahma";
+/** Set when sign-out could not reach the server but the user's data was removed. */
+export const PENDING_SIGN_OUT_KEY = "brahma-pending-sign-out";
 export const SESSION_CHANNEL = "brahma-session";
 const LEGACY_COOKIES = ["brahma-name", "brahma-guest"];
 
@@ -113,4 +115,29 @@ export async function clearDevice(userId: string, apis: DeviceApis = browserApis
   if (apis.caches) await deletePageCaches(apis.caches, "");
   LEGACY_COOKIES.forEach(apis.clearCookie);
   apis.tellServiceWorker("");
+}
+
+/** Remember a sign-out to finish once the server can be reached. */
+export function markPendingSignOut(userId: string): void {
+  try {
+    localStorage.setItem(PENDING_SIGN_OUT_KEY, userId);
+  } catch {
+    // Storage blocked: the session still ends when it expires.
+  }
+}
+
+export function pendingSignOut(): string | null {
+  try {
+    return localStorage.getItem(PENDING_SIGN_OUT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingSignOut(): void {
+  try {
+    localStorage.removeItem(PENDING_SIGN_OUT_KEY);
+  } catch {
+    // Nothing to clear.
+  }
 }
