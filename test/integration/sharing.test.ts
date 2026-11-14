@@ -67,6 +67,38 @@ describe("share actions are owner only", () => {
   });
 });
 
+describe("telling the sync server", () => {
+  const sent = () => syncCalls.filter((call) => call.call === "access").map((call) => call.args);
+
+  it("sends the new role and access version for every access change", async () => {
+    as(world.owner);
+    const bob = await makeUser("bob");
+
+    await inviteAction(world.documentId, bob.email, "viewer");
+    const bobRow = await membership(bob.id);
+    expect(sent().at(-1)).toEqual([world.documentId, [{ userId: bob.id, role: "viewer", accessVersion: bobRow.accessVersion }]]);
+
+    await changeRoleAction(world.documentId, bob.id, "editor");
+    expect(sent().at(-1)).toEqual([
+      world.documentId,
+      [{ userId: bob.id, role: "editor", accessVersion: bobRow.accessVersion + 1 }],
+    ]);
+
+    await removeMemberAction(world.documentId, bob.id);
+    expect(sent().at(-1)).toEqual([world.documentId, [{ userId: bob.id, role: null, accessVersion: bobRow.accessVersion + 2 }]]);
+
+    // Link members lose access when the link goes off.
+    await setShareLinkAction(world.documentId, true, "viewer");
+    await joinByLink(world.documentId, await linkToken(), world.stranger.id);
+    const strangerRow = await membership(world.stranger.id);
+    await setShareLinkAction(world.documentId, false, "viewer");
+    expect(sent().at(-1)).toEqual([
+      world.documentId,
+      [{ userId: world.stranger.id, role: null, accessVersion: strangerRow.accessVersion + 1 }],
+    ]);
+  });
+});
+
 describe("invites", () => {
   it("adds an existing account at once, matching email case and spaces", async () => {
     const bob = await makeUser("bob");

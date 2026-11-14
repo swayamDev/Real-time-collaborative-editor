@@ -27,14 +27,14 @@ function config(): { url: string; secret: string } {
   return { url: url.replace(/\/$/, ""), secret };
 }
 
-async function call(path: string, init: RequestInit): Promise<Response> {
+async function call(path: string, init: RequestInit, timeoutMs = TIMEOUT_MS): Promise<Response> {
   const { url, secret } = config();
   let response: Response;
   try {
     response = await fetch(`${url}/internal/documents/${path}`, {
       ...init,
       headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       cache: "no-store",
     });
   } catch (error) {
@@ -63,11 +63,43 @@ export interface SyncAccessChange {
   accessVersion: number;
 }
 
+/** Waits before each retry of an access change. Three attempts in all. */
+export const ACCESS_RETRY_DELAYS_MS = [300, 1_000];
+const ACCESS_TIMEOUT_MS = 2_000;
+
+function retryable(error: unknown): boolean {
+  if (!(error instanceof SyncRequestError)) return false;
+  // Unreachable, timed out, overloaded or failing: worth another try. Any
+  // other 4xx (bad secret, bad body) will not fix itself.
+  return error.status === null || error.status === 429 || error.status >= 500;
+}
+
 /**
  * Tell the sync server about access changes so open sockets are downgraded
- * or closed at once. Wired to the Worker in a later commit.
+ * or closed at once. Retried, and never throws: the change is already
+ * stored in Postgres. If every attempt fails, an open socket keeps its old
+ * role until its token is refreshed (the new token carries the new access
+ * version and role) or expires: at most one token lifetime plus the grace
+ * period.
  */
-export async function applyAccessChanges(documentId: string, changes: SyncAccessChange[]): Promise<void> {
-  void documentId;
-  void changes;
+export async function applyAccessChanges(
+  documentId: string,
+  changes: SyncAccessChange[],
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<boolean> {
+  if (changes.length === 0) return true;
+  const body = JSON.stringify({ changes });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await call(`${documentId}/access`, { method: "POST", body }, ACCESS_TIMEOUT_MS);
+      return true;
+    } catch (error) {
+      const delay = ACCESS_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !retryable(error)) {
+        console.error(`Access change for ${documentId} not delivered to the sync server`, error);
+        return false;
+      }
+      await sleep(delay);
+    }
+  }
 }
