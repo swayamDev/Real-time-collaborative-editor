@@ -35,6 +35,8 @@ export type SessionMessage = { type: "user"; userId: string } | { type: "signed-
 
 /** The browser APIs cleanup needs; replaced in tests. */
 export interface DeviceApis {
+  /** Who the server says is signed in right now; null when it cannot be asked. */
+  confirmSignedInUser: () => Promise<string | null>;
   indexedDB: IDBFactory | null;
   caches: CacheStorage | null;
   /** Tell the service worker who is signed in ("" for nobody). */
@@ -45,6 +47,16 @@ export interface DeviceApis {
 
 export function browserApis(): DeviceApis {
   return {
+    confirmSignedInUser: async () => {
+      try {
+        const response = await fetch("/api/auth/get-session", { credentials: "same-origin", cache: "no-store" });
+        if (!response.ok) return null;
+        const body = (await response.json()) as { user?: { id?: unknown } } | null;
+        return typeof body?.user?.id === "string" ? body.user.id : null;
+      } catch {
+        return null;
+      }
+    },
     indexedDB: typeof indexedDB === "undefined" ? null : indexedDB,
     caches: typeof caches === "undefined" ? null : caches,
     tellServiceWorker: (userId) => {
@@ -92,8 +104,15 @@ async function deletePageCaches(storage: CacheStorage, keepUserId: string): Prom
 /**
  * Run on every signed-in page load: this device now belongs to `userId`.
  * Other users' databases and page caches go, and their open tabs reload.
+ *
+ * Only for a user the server confirms right now. A page can show a user
+ * who is no longer signed in: one served from the offline cache, or a tab
+ * left open from before someone else signed in. Cleaning up for that user
+ * would delete the signed-in person's data, so without confirmation (also
+ * when offline) this does nothing.
  */
-export async function claimDevice(userId: string, apis: DeviceApis = browserApis()): Promise<void> {
+export async function claimDevice(userId: string, apis: DeviceApis = browserApis()): Promise<"claimed" | "unconfirmed"> {
+  if ((await apis.confirmSignedInUser()) !== userId) return "unconfirmed";
   // Tabs still showing someone else reload first, closing their connections.
   apis.postSession({ type: "user", userId });
   if (apis.indexedDB) {
@@ -103,6 +122,7 @@ export async function claimDevice(userId: string, apis: DeviceApis = browserApis
   if (apis.caches) await deletePageCaches(apis.caches, userId);
   LEGACY_COOKIES.forEach(apis.clearCookie);
   apis.tellServiceWorker(userId);
+  return "claimed";
 }
 
 /** Sign-out: delete this user's data from the device. Call after closing local stores. */

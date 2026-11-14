@@ -75,22 +75,12 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-/**
- * Store a page only once its whole body has arrived. Putting a streaming
- * response replaces the old entry even if the stream then fails (the
- * network drops mid-download), which would leave no copy at all.
- */
-async function keepPage(pages, path, response) {
-  const body = await response.arrayBuffer();
-  await pages.put(path, new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers }));
-}
-
 /** A page the app asks to keep, for example a document it just opened. */
 async function cachePage(url) {
   const pages = await pageCache();
   if (!pages) return;
   const response = await fetch(url, { credentials: "include", cache: "no-store" });
-  if (response.ok && !response.redirected) await keepPage(pages, url, response);
+  if (response.ok && !response.redirected) await pages.put(url, response);
 }
 
 self.addEventListener("message", (event) => {
@@ -121,8 +111,7 @@ async function pageNetworkFirst(request, url) {
     const response = await fetch(request);
     if (response.ok && !response.redirected) {
       const pages = await pageCache();
-      // Not awaited: the page renders while its copy is stored.
-      if (pages) keepPage(pages, url.pathname, response.clone()).catch(() => {});
+      if (pages) pages.put(url.pathname, response.clone());
     }
     return response;
   } catch (error) {

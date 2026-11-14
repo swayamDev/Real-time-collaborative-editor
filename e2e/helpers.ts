@@ -66,7 +66,11 @@ export async function expectReadyOffline(page: Page): Promise<void> {
   }
   await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller), undefined, { timeout: 15_000 });
   const path = new URL(page.url()).pathname;
-  await page.waitForFunction(async (url) => Boolean(await caches.match(url)), path, { timeout: 15_000 });
+  // Poll with expect.poll: page.waitForFunction does not await an async
+  // predicate (the returned Promise counts as truthy), so it would not wait.
+  await expect
+    .poll(() => page.evaluate(async (url) => Boolean(await caches.match(url)), path), { timeout: 15_000 })
+    .toBe(true);
 }
 
 /** Document text without collaborator caret flags. */

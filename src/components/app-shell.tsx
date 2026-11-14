@@ -132,8 +132,10 @@ export function AppShell({
         await finishSignOut();
         return;
       }
-      await claimDevice(user.id).catch(() => {});
-      if (cancelled || !navigator.onLine) return;
+      // Only for a user the server confirms (see claimDevice); pruning also
+      // needs the server's list to be current.
+      const claimed = await claimDevice(user.id).catch(() => "unconfirmed");
+      if (cancelled || claimed !== "claimed") return;
       const store = await getLocalStore(user.id);
       if (store) await pruneInaccessible(store, accessibleAtLoad).catch(() => []);
     })();
