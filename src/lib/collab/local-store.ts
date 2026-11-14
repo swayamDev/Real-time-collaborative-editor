@@ -118,6 +118,9 @@ export class LocalStore {
       db.createObjectStore("pending", { keyPath: "seq", autoIncrement: true }).createIndex("docId", "docId");
     };
     const db = await request(req);
+    // Another tab is deleting this database (sign-out, or someone else signed
+    // in): let it. That tab also tells this one to reload.
+    db.onversionchange = () => db.close();
     return new LocalStore(db);
   }
 

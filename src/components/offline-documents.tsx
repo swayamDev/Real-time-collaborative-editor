@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSyncExternalStore } from "react";
 import { displayTitle } from "@/lib/title";
+import { useShell } from "./app-shell";
 import { useDeviceDocuments } from "./use-device";
 
 declare global {
@@ -13,13 +14,14 @@ declare global {
 
 /** The offline fallback: what was asked for, and what this device can open. */
 export function OfflineDocuments() {
+  const { user } = useShell();
   // Read after hydration, so the server render and the first client render agree.
   const requested = useSyncExternalStore(
     () => () => {},
     () => window.__brahmaRequestedPath ?? "",
     () => "",
   );
-  const documents = [...useDeviceDocuments().values()].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
+  const documents = [...useDeviceDocuments(user.id).values()].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
   const askedForDocument = requested.startsWith("/d/");
 
   return (

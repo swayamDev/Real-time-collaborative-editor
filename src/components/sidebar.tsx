@@ -21,8 +21,9 @@ export function activeDocumentId(pathname: string): string | null {
 
 export function Sidebar({ variant }: { variant: "docked" | "drawer" }) {
   const { documents, remove } = useDocuments();
+  const { user } = useShell();
   const online = useOnline();
-  const onDevice = useDeviceDocuments();
+  const onDevice = useDeviceDocuments(user.id);
   // Offline, the server list may be a stale cached copy: add documents that
   // only this device knows about, so everything openable offline is listed.
   const listed = online

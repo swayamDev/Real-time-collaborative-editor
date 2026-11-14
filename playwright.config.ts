@@ -1,7 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
+import { e2eAuthEnv } from "./e2e/auth-env";
 import { SYNC_PORT, SYNC_SECRET, databaseUrl } from "./e2e/sync-server";
 
 const PORT = 3100;
+const auth = e2eAuthEnv();
 
 export default defineConfig({
   testDir: "./e2e",
@@ -37,6 +39,11 @@ export default defineConfig({
       NEXT_PUBLIC_SYNC_URL: `ws://localhost:${SYNC_PORT}`,
       SYNC_INTERNAL_URL: `http://localhost:${SYNC_PORT}`,
       SYNC_INTERNAL_SECRET: SYNC_SECRET,
+      BETTER_AUTH_URL: `http://localhost:${PORT}`,
+      BETTER_AUTH_SECRET: auth.authSecret,
+      SYNC_TOKEN_PRIVATE_KEY: auth.privateJwk,
+      // Magic links land in test-results/outbox/<email>.txt.
+      EMAIL_TRANSPORT: "file",
     },
   },
 });

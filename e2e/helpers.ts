@@ -54,6 +54,11 @@ export async function waitForEditorSelection(page: Page, text: string): Promise<
  * current document page, so an offline reload is really served offline.
  */
 export async function expectReadyOffline(page: Page): Promise<void> {
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  // A navigation that started while the worker was still activating (for
+  // example the sign-in redirect) stays uncontrolled for that page's life.
+  // The next load is controlled; tests that go offline need this one to be.
+  if (!(await page.evaluate(() => Boolean(navigator.serviceWorker.controller)))) await page.reload();
   await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller), undefined, { timeout: 15_000 });
   const path = new URL(page.url()).pathname;
   await page.waitForFunction(async (url) => Boolean(await caches.match(url)), path, { timeout: 15_000 });

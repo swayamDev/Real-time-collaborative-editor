@@ -6,7 +6,7 @@ import { createDocumentCopyAction } from "@/app/actions";
 import { loadLocalCopy, moveLocalCopy } from "@/lib/collab/copy-document";
 import { getLocalStore } from "@/lib/collab/device-store";
 import { DELETED_WHILE_OFFLINE, SAVE_COPY_FAILED } from "@/lib/copy";
-import { useDocuments } from "../app-shell";
+import { useDocuments, useShell } from "../app-shell";
 import { DocumentGone } from "./document-gone";
 
 type State = "checking" | "offer" | "gone";
@@ -19,6 +19,7 @@ type State = "checking" | "offer" | "gone";
 export function DeletedDocument({ id, reason }: { id: string; reason: "deleted" | "not-found" }) {
   const router = useRouter();
   const { ensure } = useDocuments();
+  const { user } = useShell();
   const [state, setState] = useState<State>("checking");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +27,7 @@ export function DeletedDocument({ id, reason }: { id: string; reason: "deleted" 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const store = await getLocalStore();
+      const store = await getLocalStore(user.id);
       if (!store) {
         if (!cancelled) setState("gone");
         return;
@@ -43,7 +44,7 @@ export function DeletedDocument({ id, reason }: { id: string; reason: "deleted" 
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, user.id]);
 
   if (state === "checking") return <div className="doc-column pt-14 sm:pt-24" aria-busy="true" />;
   if (state === "gone") return <DocumentGone reason={reason} />;
@@ -52,7 +53,7 @@ export function DeletedDocument({ id, reason }: { id: string; reason: "deleted" 
     setBusy(true);
     setError(null);
     try {
-      const store = await getLocalStore();
+      const store = await getLocalStore(user.id);
       if (!store) throw new Error("No device store");
       const { doc } = await loadLocalCopy(store, id);
       const result = await createDocumentCopyAction(doc.getText("title").toString());
@@ -72,7 +73,7 @@ export function DeletedDocument({ id, reason }: { id: string; reason: "deleted" 
 
   const discard = async () => {
     setBusy(true);
-    const store = await getLocalStore();
+    const store = await getLocalStore(user.id);
     await store?.deleteDocument(id).catch(() => {});
     setBusy(false);
     setState("gone");

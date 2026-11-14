@@ -11,6 +11,9 @@ import {
 } from "react";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
+import { getLocalStore } from "@/lib/collab/device-store";
+import { pruneInaccessible } from "@/lib/collab/prune";
+import { SESSION_CHANNEL, type SessionMessage, claimDevice } from "@/lib/device-data";
 import { SIDEBAR_COOKIE, THEME_COOKIE, type Theme, writePreferenceCookie } from "@/lib/preferences";
 import type { DocumentSummary } from "@/server/documents";
 import { Sidebar } from "./sidebar";
@@ -98,6 +101,33 @@ export function AppShell({
       docs.map((doc) => (doc.id === id ? { ...doc, updatedAt } : doc)).sort(byLastEdited),
     );
   }, []);
+
+  // This device belongs to whoever is signed in now: delete anyone else's
+  // data (sign-out may never have run), then drop local copies of documents
+  // this user can no longer open. Pruning trusts the server list only online.
+  const [accessibleAtLoad] = useState(() => new Set(serverDocuments.map((doc) => doc.id)));
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await claimDevice(user.id).catch(() => {});
+      if (cancelled || !navigator.onLine) return;
+      const store = await getLocalStore(user.id);
+      if (store) await pruneInaccessible(store, accessibleAtLoad).catch(() => []);
+    })();
+    // Another tab signed in as someone else, or signed this user out.
+    const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(SESSION_CHANNEL);
+    if (channel) {
+      channel.onmessage = (event: MessageEvent<SessionMessage>) => {
+        const message = event.data;
+        if (message?.type === "user" && message.userId !== user.id) window.location.reload();
+        if (message?.type === "signed-out" && message.userId === user.id) window.location.replace("/sign-in");
+      };
+    }
+    return () => {
+      cancelled = true;
+      channel?.close();
+    };
+  }, [user.id, accessibleAtLoad]);
 
   const remove = useCallback((id: string) => {
     setDocuments((docs) => docs.filter((doc) => doc.id !== id));

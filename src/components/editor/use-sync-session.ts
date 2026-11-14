@@ -56,7 +56,7 @@ export function useSyncSession(
     let cancelled = false;
     let teardown = () => {};
     void (async () => {
-      const store = await getLocalStore();
+      const store = await getLocalStore(user.id);
       if (clearFirst.current) {
         clearFirst.current = false;
         await store?.deleteDocument(documentId).catch(() => {});
@@ -132,9 +132,9 @@ export function useSyncSession(
   }, []);
 
   const clearLocalCopy = useCallback(async () => {
-    const store = await getLocalStore();
+    const store = await getLocalStore(user.id);
     await store?.deleteDocument(documentId).catch(() => {});
-  }, [documentId]);
+  }, [documentId, user.id]);
 
   return { session, rebuildAsViewer, clearLocalCopy };
 }

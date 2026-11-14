@@ -23,13 +23,13 @@ export function useOnline(): boolean {
  * Documents stored on this device, keyed by id, kept current across tabs
  * through the store's BroadcastChannel. Empty until the store has loaded.
  */
-export function useDeviceDocuments(): Map<string, DocumentMeta> {
+export function useDeviceDocuments(userId: string): Map<string, DocumentMeta> {
   const [documents, setDocuments] = useState<Map<string, DocumentMeta>>(() => new Map());
 
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
-      const store = await getLocalStore();
+      const store = await getLocalStore(userId);
       if (!store) return;
       const metas = await store.listDocuments().catch(() => []);
       if (!cancelled) setDocuments(new Map(metas.map((meta) => [meta.id, meta])));
@@ -41,7 +41,7 @@ export function useDeviceDocuments(): Map<string, DocumentMeta> {
       cancelled = true;
       channel.close();
     };
-  }, []);
+  }, [userId]);
 
   return documents;
 }

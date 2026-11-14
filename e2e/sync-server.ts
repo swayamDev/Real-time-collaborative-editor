@@ -2,6 +2,7 @@ import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import treeKill from "tree-kill";
+import { e2eAuthEnv } from "./auth-env";
 
 /**
  * Starts and stops `wrangler dev` for the sync Worker during end-to-end
@@ -41,6 +42,21 @@ async function waitFor(condition: () => Promise<boolean>, timeoutMs: number, lab
   }
 }
 
+const ENV_FILE = join(ROOT, "test-results", "e2e-worker.env");
+
+/** The Worker's secrets for end-to-end runs, as a dotenv file. */
+function writeWorkerEnv(): string {
+  mkdirSync(join(ROOT, "test-results"), { recursive: true });
+  const vars = {
+    DATABASE_URL: databaseUrl(),
+    SYNC_INTERNAL_SECRET: SYNC_SECRET,
+    SYNC_TOKEN_PUBLIC_KEYS: e2eAuthEnv().publicKeys,
+  };
+  const lines = Object.entries(vars).map(([key, value]) => `${key}='${value}'`);
+  writeFileSync(ENV_FILE, `${lines.join("\n")}\n`);
+  return ENV_FILE;
+}
+
 /** Start the Worker. Durable Object storage persists in STATE_DIR across restarts. */
 export async function startSyncServer({ fresh = false } = {}): Promise<void> {
   if (fresh) rmSync(STATE_DIR, { recursive: true, force: true });
@@ -58,10 +74,9 @@ export async function startSyncServer({ fresh = false } = {}): Promise<void> {
       String(SYNC_PORT),
       "--persist-to",
       STATE_DIR,
-      "--var",
-      `DATABASE_URL:${databaseUrl()}`,
-      "--var",
-      `SYNC_INTERNAL_SECRET:${SYNC_SECRET}`,
+      // Its own env file, so a developer's workers/sync/.dev.vars never applies.
+      "--env-file",
+      writeWorkerEnv(),
       "--show-interactive-dev-session=false",
     ],
     {
