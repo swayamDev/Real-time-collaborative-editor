@@ -63,6 +63,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:migrate
+      # Server actions and authorization against the Postgres service.
+      - run: pnpm test:integration
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm build
       - run: pnpm check:bundles
