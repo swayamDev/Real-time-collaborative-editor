@@ -1,4 +1,4 @@
-import { isDocumentId, tokenFromSubprotocols, verifySyncToken } from "@brahma/protocol";
+import { isDocumentId, schemaFromSubprotocols, tokenFromSubprotocols, verifySyncToken } from "@brahma/protocol";
 import { identityFromClaims, publicKeys, withoutIdentityHeaders, writeIdentity } from "./identity";
 import { bearerToken, secretMatches } from "./secret";
 
@@ -33,11 +33,12 @@ export default {
 
       // Authenticate before a Durable Object is ever touched. The token
       // travels in the subprotocol header, so it stays out of URLs and logs.
-      const token = tokenFromSubprotocols(request.headers.get("Sec-WebSocket-Protocol"));
+      const offered = request.headers.get("Sec-WebSocket-Protocol");
+      const token = tokenFromSubprotocols(offered);
       if (!token) return new Response("Missing sync token", { status: 401 });
       let identity;
       try {
-        identity = identityFromClaims(await verifySyncToken(token, publicKeys(env), socket[1]));
+        identity = identityFromClaims(await verifySyncToken(token, publicKeys(env), socket[1]), schemaFromSubprotocols(offered));
       } catch {
         return new Response("Invalid sync token", { status: 401 });
       }

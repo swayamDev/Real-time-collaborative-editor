@@ -52,6 +52,15 @@ export class RoomStorage {
     else this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", key, value);
   }
 
+  /** The newest document schema version any client of this document has used. */
+  newestSchema(): number {
+    return Number(this.getMeta("newest_schema") ?? 0);
+  }
+
+  setNewestSchema(version: number): void {
+    this.setMeta("newest_schema", String(version));
+  }
+
   /** The document this room belongs to, once it has been loaded. */
   documentId(): string | null {
     return this.getMeta("document_id");

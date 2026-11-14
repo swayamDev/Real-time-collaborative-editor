@@ -76,11 +76,14 @@ export class TestClient {
 
   static async connect(
     documentId: string,
-    options: { as?: TestUser; token?: string; headers?: Record<string, string> } = {},
+    options: { as?: TestUser; token?: string; headers?: Record<string, string>; schema?: number | null } = {},
   ): Promise<TestClient> {
     const token = options.token ?? (await tokenFor(documentId, options.as ?? EDITOR));
+    // The document schema version the client claims; null sends none.
+    const schema = options.schema === undefined ? 1 : options.schema;
+    const offered = ["brahma.v1", ...(schema === null ? [] : [`schema.${schema}`]), `auth.${token}`];
     const response = await TestClient.rawUpgrade(documentId, {
-      "Sec-WebSocket-Protocol": `brahma.v1, auth.${token}`,
+      "Sec-WebSocket-Protocol": offered.join(", "),
       ...options.headers,
     });
     if (!response.webSocket) throw new Error(`No WebSocket: ${response.status}`);

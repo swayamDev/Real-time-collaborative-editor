@@ -2,6 +2,7 @@ import "client-only";
 import {
   AUTH_SUBPROTOCOL_PREFIX,
   BATCH_TARGET_BYTES,
+  schemaSubprotocol,
   type Message,
   SYNC_SUBPROTOCOL,
   decodeMessage,
@@ -83,6 +84,8 @@ interface ProviderOptions {
   fetchToken: () => Promise<TokenResult>;
   /** The role the page was rendered with; the token's role replaces it. */
   initialRole: Role;
+  /** The document schema version this bundle's editor runs. */
+  schemaVersion: number;
   /** Called with every role this tab learns from the server (null: no access). */
   onAccessLearned?: (role: Role | null) => void;
   environment?: ProviderEnvironment;
@@ -370,7 +373,11 @@ export class SyncProvider {
   }
 
   private open(token: string): void {
-    const socket = this.env.createSocket(this.options.url, [SYNC_SUBPROTOCOL, `${AUTH_SUBPROTOCOL_PREFIX}${token}`]);
+    const socket = this.env.createSocket(this.options.url, [
+      SYNC_SUBPROTOCOL,
+      schemaSubprotocol(this.options.schemaVersion),
+      `${AUTH_SUBPROTOCOL_PREFIX}${token}`,
+    ]);
     socket.binaryType = "arraybuffer";
     const connection: Connection = {
       socket,
@@ -466,6 +473,8 @@ export class SyncProvider {
       case "deleted":
       case "not-found":
       case "session-ended":
+      case "outdated":
+        // Outdated: queued edits stay on the device; the page updates and reloads.
         this.stop(action);
         return;
     }

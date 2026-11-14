@@ -27,6 +27,12 @@ const SECURITY_HEADERS = [
 ];
 
 const nextConfig: NextConfig = {
+  env: {
+    // Always defined, so builds without it inline "0" and the minifier drops
+    // the test-only branches (an undefined NEXT_PUBLIC_ variable is left as a
+    // runtime lookup instead).
+    NEXT_PUBLIC_E2E_HOOKS: process.env.NEXT_PUBLIC_E2E_HOOKS === "1" ? "1" : "0",
+  },
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   },

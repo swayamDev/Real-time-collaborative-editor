@@ -51,6 +51,9 @@ jobs:
       DATABASE_URL_UNPOOLED: postgres://brahma:brahma@localhost:5432/brahma
       # Must match e2e/sync-server.ts. NEXT_PUBLIC_SYNC_URL is baked in at build time.
       NEXT_PUBLIC_SYNC_URL: ws://localhost:8788
+      # Test-only hooks (pretending to be an older bundle); compiled out of
+      # every build without it.
+      NEXT_PUBLIC_E2E_HOOKS: "1"
       SYNC_INTERNAL_URL: http://localhost:8788
       SYNC_INTERNAL_SECRET: e2e-secret
       WRANGLER_SEND_METRICS: "false"

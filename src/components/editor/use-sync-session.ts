@@ -13,6 +13,7 @@ import { syncUrl } from "@/lib/collab/sync-url";
 import { TabChannel } from "@/lib/collab/tab-channel";
 import type { Role } from "@/lib/permissions";
 import type { ShellUser } from "../app-shell";
+import { clientSchemaVersion } from "./schema-version";
 
 export interface SyncSession {
   local: LocalDocument;
@@ -87,6 +88,7 @@ export function useSyncSession(
         local,
         awareness,
         initialRole: role.current,
+        schemaVersion: clientSchemaVersion(),
         fetchToken: () => fetchSyncToken(documentId),
         onAccessLearned: (learned) => {
           if (learned) role.current = learned;

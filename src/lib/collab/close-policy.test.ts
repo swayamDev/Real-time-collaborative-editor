@@ -13,6 +13,8 @@ describe("closeAction: one row per code", () => {
     ["4405 as an editor runs downgrade handling", 4405, {}, "downgraded"],
     ["4405 as a viewer halts instead of looping", 4405, { viewer: true }, "halt"],
     ["4410 runs deleted handling", 4410, {}, "deleted"],
+    ["4426 updates and reloads instead of reconnecting", 4426, {}, "outdated"],
+    ["4426 with edits in flight still does not reconnect", 4426, { unackedEntries: 3 }, "outdated"],
     ["4404 is not found", 4404, {}, "not-found"],
     ["4400 is not found", 4400, {}, "not-found"],
     ["1007 with a batch of edits isolates once", 1007, { unackedEntries: 3 }, "isolate"],
@@ -66,6 +68,7 @@ describe("closeAction: no reconnect loops", () => {
     for (let code = 4000; code <= 4999; code++) {
       for (const context of allContexts) {
         const action = closeAction(code, context);
+        if (code === 4426) expect(action).toBe("outdated");
         if (RECONNECTING_ACTIONS.has(action)) {
           expect(code).toBe(4401);
           expect(action).toBe("refresh-token");

@@ -236,6 +236,23 @@ Snapshots, compaction and the dirty marker add a handful of rows per alarm. That
 
 **Shared computers (Phase 4).** Everything above stays on the device after the tab closes. When accounts arrive, signing out must delete the `brahma` IndexedDB database **and** the service worker's caches (they hold document pages), and clear the guest cookies, so the next person on the same computer sees nothing.
 
+## Changing the document schema
+
+Shared document content is untrusted: any editor can send raw Yjs data. So the editor binding removes shared content its schema cannot hold, and for editors that removal syncs. The same rule would let a tab running an older cached bundle remove content made with node types it does not know. Schema versions prevent that.
+
+- The editor's schema has a version, `DOCUMENT_SCHEMA_VERSION` in [schema-version.ts](src/components/editor/schema-version.ts). The client sends it with every connection as a subprotocol entry: `brahma.v1, schema.<n>, auth.<token>`. It describes the client's code, not the user, so it is not a token claim: the app server issues tokens but cannot know which bundle a tab runs.
+- Each document's room remembers the newest version it has seen. It refuses an older client with close code `4426` before accepting the socket, so none of that client's updates are applied, and a newer client closes older ones still connected.
+- On `4426` the client stops syncing, waits until every queued edit is written to the device, updates the service worker and reloads, showing "Brahma was updated. Reloading." The queued edits stay on the device and the new bundle sends them. If a tab already reloaded for an update in the last two minutes, it asks the user to reload instead of reloading again, so it can never loop.
+
+When you add a node type, mark type or attribute:
+
+1. Only add. Never remove or rename a type or attribute that documents may contain, and never narrow what an existing node may contain. New clients would remove that content from every document they open.
+2. Give new attributes defaults, so content from older clients stays valid.
+3. Bump `DOCUMENT_SCHEMA_VERSION` in the same change and record the new fingerprint in [schema-version.test.ts](src/components/editor/schema-version.test.ts). That test fails until you do, and another fails if anything from an earlier version disappears.
+4. Deploy the app. The sync Worker needs no change: once a client on the new version opens a document, older tabs on that document are refused and reload.
+
+The version protects honest clients running an old bundle. A client can claim any version, but a malicious editor could delete content anyway.
+
 ## Why Yjs never loads on the server
 
 Turbopack bundles `node_modules` into each server entry (pages, route handlers, server-side rendering of client components), and all of them run in one Node process. Yjs sets a flag on `globalThis` when it loads and warns when a second copy appears ("Yjs was already imported"), because two copies break its `instanceof` checks. Phase 1 had four server copies. Now:

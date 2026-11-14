@@ -8,6 +8,8 @@ import type * as Y from "yjs";
 import {
   ACCESS_DOWNGRADED,
   ACCESS_REVOKED,
+  CLIENT_UPDATED,
+  CLIENT_UPDATED_RELOAD,
   SESSION_ENDED,
   STORAGE_FULL,
   SYNC_HALTED,
@@ -16,6 +18,7 @@ import {
 } from "@/lib/copy";
 import { type Role, can, canWrite } from "@/lib/permissions";
 import { displayTitle } from "@/lib/title";
+import { reloadForUpdate } from "@/lib/update-reload";
 import { useDocuments, useShell } from "../app-shell";
 import { cachePageForOffline } from "../service-worker";
 import { ShareButton } from "../share-dialog";
@@ -126,6 +129,28 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, 
     });
   }, [session, rebuildAsViewer]);
 
+  // The document has seen a newer schema than this bundle runs: update and
+  // reload, after every queued edit is written to the device.
+  const [update, setUpdate] = useState<null | "reloading" | "manual">(null);
+  useEffect(() => {
+    if (!session) return;
+    let handled = false;
+    return session.provider.subscribe(() => {
+      if (handled || session.provider.getStatus() !== "outdated") return;
+      handled = true;
+      setUpdate("reloading");
+      const waitForDevice = async () => {
+        const deadline = Date.now() + 5_000;
+        while (session.provider.hasUnsavedChanges && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      };
+      void reloadForUpdate(waitForDevice).then((result) => {
+        if (result === "already-tried") setUpdate("manual");
+      });
+    });
+  }, [session]);
+
   // Access removed: the page keeps its in-memory copy for "Download a copy";
   // this device's copy goes.
   useEffect(() => {
@@ -234,6 +259,13 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, 
             testId="access-downgraded"
             message={ACCESS_DOWNGRADED}
             action={{ label: "Download a copy", onClick: () => downloadCopy(refusedCopy) }}
+          />
+        )}
+        {update && (
+          <DocumentBanner
+            testId="client-outdated"
+            message={update === "manual" ? CLIENT_UPDATED_RELOAD : CLIENT_UPDATED}
+            action={update === "manual" ? { label: "Reload", onClick: () => window.location.reload() } : undefined}
           />
         )}
         {status === "session-ended" && (

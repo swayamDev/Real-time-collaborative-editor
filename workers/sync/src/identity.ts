@@ -15,12 +15,22 @@ export interface Identity {
   image: string | null;
   /** Token expiry, seconds since epoch. */
   exp: number;
+  /** The document schema version the client's editor runs (0 if it did not say). */
+  schema: number;
 }
 
 const PREFIX = "x-brahma-";
 
-export function identityFromClaims(claims: SyncClaims): Identity {
-  return { userId: claims.sub, role: claims.role, av: claims.av, name: claims.name, image: claims.image, exp: claims.exp };
+export function identityFromClaims(claims: SyncClaims, schema: number): Identity {
+  return {
+    userId: claims.sub,
+    role: claims.role,
+    av: claims.av,
+    name: claims.name,
+    image: claims.image,
+    exp: claims.exp,
+    schema,
+  };
 }
 
 /** Copy a request's headers without anything a client could use to pose as someone. */
@@ -41,7 +51,8 @@ export function readIdentity(headers: Headers): Identity | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as Identity;
-    return typeof value.userId === "string" && typeof value.role === "string" ? value : null;
+    if (typeof value.userId !== "string" || typeof value.role !== "string") return null;
+    return { ...value, schema: Number.isInteger(value.schema) ? value.schema : 0 };
   } catch {
     return null;
   }

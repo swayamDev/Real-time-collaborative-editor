@@ -7,6 +7,8 @@
  *     revoked               terminal; access removed (message, Download a copy)
  *     downgraded            sync stopped; the copy is rebuilt as a viewer
  *     session-ended         sync stopped until the user signs in again (banner)
+ *     outdated              this bundle's schema is older than the document's:
+ *                           update and reload, keeping queued edits
  *  2. halted                the server refused an edit; sync stopped (banner)
  *  3. saving                a local edit has waited over 1s to be written on
  *                           the device (or cannot be, because storage is full)
@@ -21,7 +23,7 @@
  * 10. saved                 connected, everything acknowledged
  */
 /** Why a provider stopped for good. */
-export type StopReason = "deleted" | "not-found" | "revoked" | "downgraded" | "session-ended";
+export type StopReason = "deleted" | "not-found" | "revoked" | "downgraded" | "session-ended" | "outdated";
 
 export type SyncStatus =
   | StopReason
@@ -74,6 +76,7 @@ export const STATUS_LABELS: Record<SyncStatus, string> = {
   revoked: "",
   downgraded: "",
   "session-ended": "Not syncing",
+  outdated: "",
   halted: "",
   saving: "Saving",
   "saved-on-device": "Saved on this device",

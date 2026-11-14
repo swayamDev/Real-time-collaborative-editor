@@ -1,5 +1,6 @@
 import {
   CLOSE_ACCESS_REVOKED,
+  CLOSE_CLIENT_OUTDATED,
   CLOSE_DELETED,
   CLOSE_MALFORMED,
   CLOSE_POLICY,
@@ -53,6 +54,8 @@ interface Attachment {
   image: string | null;
   /** Token expiry, seconds since epoch. */
   exp: number;
+  /** Document schema version the client runs. */
+  schema: number;
 }
 
 function canWrite(role: TokenRole): boolean {
@@ -137,6 +140,14 @@ export class DocumentRoom extends DurableObject<Env> {
     if (result === "deleted") return refuse(CLOSE_DELETED, "Document deleted");
     if (result !== "ok") return refuse(CLOSE_NOT_FOUND, "Document not found");
 
+    // A client running an older document schema would remove content made
+    // with newer node types (an editor's binding removes what its schema
+    // cannot hold). Refuse it before it can send anything; it updates and
+    // reloads. A newer client closes older ones still connected.
+    const newest = this.storage.newestSchema();
+    if (identity.schema < newest) return refuse(CLOSE_CLIENT_OUTDATED, "Brahma was updated");
+    if (identity.schema > newest) this.raiseSchema(identity.schema);
+
     const role = effectiveRole(identity, this.storage.getAccess(identity.userId));
     if (!role) return refuse(CLOSE_ACCESS_REVOKED, "Access removed");
 
@@ -149,6 +160,7 @@ export class DocumentRoom extends DurableObject<Env> {
       name: identity.name,
       image: identity.image,
       exp: identity.exp,
+      schema: identity.schema,
     } satisfies Attachment);
 
     // Step 1 from the server: the client replies with Step 2 (its edits we lack).
@@ -620,6 +632,15 @@ export class DocumentRoom extends DurableObject<Env> {
   }
 
   /** Close one misbehaving socket. The room and every other socket carry on. */
+  /** Record a newer schema version and close every socket running an older one. */
+  private raiseSchema(version: number): void {
+    this.storage.setNewestSchema(version);
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as Attachment | null;
+      if ((attachment?.schema ?? 0) < version) this.reject(ws, CLOSE_CLIENT_OUTDATED, "Brahma was updated");
+    }
+  }
+
   private reject(ws: WebSocket, code: number, reason: string): void {
     console.warn(`Rejected message: ${reason}`);
     this.removeSocket(ws);

@@ -1,6 +1,7 @@
-import { CONTENT_FIELD, TITLE_FIELD, encodeUpdate } from "@brahma/protocol";
+import { CONTENT_FIELD, TITLE_FIELD, encodeUpdate, schemaSubprotocol } from "@brahma/protocol";
 import type { Browser, Page } from "@playwright/test";
 import * as Y from "yjs";
+import { DOCUMENT_SCHEMA_VERSION } from "../src/components/editor/schema-version";
 import { signIn, uniqueEmail } from "./auth";
 import { expect, test } from "./fixtures";
 import { createDocument, expectSaved } from "./helpers";
@@ -53,7 +54,13 @@ async function sendRaw(page: Page, documentId: string, update: Uint8Array): Prom
     (id) => fetch(`/api/documents/${id}/sync-token`, { method: "POST" }).then((response) => response.json()),
     documentId,
   );
-  const socket = new WebSocket(`ws://localhost:${SYNC_PORT}/documents/${documentId}`, ["brahma.v1", `auth.${token}`]);
+  // A malicious client can claim the current schema version; the version
+  // check protects honest stale clients, not against attackers.
+  const socket = new WebSocket(`ws://localhost:${SYNC_PORT}/documents/${documentId}`, [
+    "brahma.v1",
+    schemaSubprotocol(DOCUMENT_SCHEMA_VERSION),
+    `auth.${token}`,
+  ]);
   await new Promise<void>((resolve, reject) => {
     socket.onopen = () => resolve();
     socket.onerror = () => reject(new Error("socket failed"));

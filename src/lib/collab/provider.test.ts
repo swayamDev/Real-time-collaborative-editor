@@ -213,6 +213,7 @@ async function openTab(docId = "doc", options: { role?: Role; tokens?: TokenResu
     awareness,
     environment,
     initialRole: role,
+    schemaVersion: 3,
     fetchToken: async () => {
       tab.tokenRequests += 1;
       return tab.tokens.shift() ?? okToken(role);
@@ -413,10 +414,10 @@ describe("other states", () => {
 });
 
 describe("sync tokens", () => {
-  it("connects with brahma.v1 and the token as subprotocols", async () => {
+  it("connects with brahma.v1, its schema version and the token as subprotocols", async () => {
     const tab = await openTab("doc", { tokens: [okToken("editor")] });
     await until(() => tab.provider.getStatus() === "saved", "saved");
-    expect(tab.sockets[0].protocols).toEqual(["brahma.v1", `auth.token-${tokenSerial}`]);
+    expect(tab.sockets[0].protocols).toEqual(["brahma.v1", "schema.3", `auth.token-${tokenSerial}`]);
   });
 
   it("refreshes the token in band at 70% of its lifetime, without reconnecting", async () => {
@@ -501,6 +502,20 @@ describe("close codes", () => {
     await until(() => tab.provider.getStatus() === "halted", "halted");
     await tick(BACKOFF_MAX_MS * 2);
     expect(tab.sockets).toHaveLength(1);
+  });
+
+  it("4426: stops for an update without reconnecting, and keeps queued edits on the device", async () => {
+    online = false;
+    const tab = await openTab();
+    type(tab.local, "written offline");
+    await until(async () => (await pendingCount()) === 1, "stored");
+    server.refuseWith = 4426;
+    tab.setOnline(true);
+    await until(() => tab.provider.getStatus() === "outdated", "outdated");
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets).toHaveLength(1);
+    expect(server.text()).toBe("");
+    expect(await pendingCount()).toBe(1);
   });
 
   it("1008: halts with no retry", async () => {

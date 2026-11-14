@@ -1,5 +1,6 @@
 import {
   CLOSE_ACCESS_REVOKED,
+  CLOSE_CLIENT_OUTDATED,
   CLOSE_DELETED,
   CLOSE_INVALID_ID,
   CLOSE_MALFORMED,
@@ -34,6 +35,8 @@ export type CloseAction =
   | "downgraded"
   | "deleted"
   | "not-found"
+  /** This bundle's document schema is older than the document's: update and reload. */
+  | "outdated"
   /** One bounded retry that sends queued edits one per message to find the rejected one. */
   | "isolate"
   /** Stop syncing this document and show the couldn't-sync banner. Nothing is retried. */
@@ -62,6 +65,9 @@ export function closeAction(code: number, context: CloseContext): CloseAction {
       return context.viewer ? "halt" : "downgraded";
     case CLOSE_DELETED:
       return "deleted";
+    case CLOSE_CLIENT_OUTDATED:
+      // Reconnecting would be refused again: only a newer bundle helps.
+      return "outdated";
     case CLOSE_NOT_FOUND:
     case CLOSE_INVALID_ID:
       return "not-found";
