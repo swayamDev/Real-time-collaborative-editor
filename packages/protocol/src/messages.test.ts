@@ -66,3 +66,15 @@ describe("decodeMessage rejects malformed input", () => {
     expect(() => decodeMessage(Uint8Array.of(...valid, 0))).toThrow(ProtocolError);
   });
 });
+
+describe("auth and role messages", () => {
+  it("round trips a refreshed token and a role change", async () => {
+    const { encodeAuth, encodeRole } = await import("./messages");
+    expect(decodeMessage(encodeAuth("a.b.c"))).toEqual({ type: "auth", token: "a.b.c" });
+    expect(decodeMessage(encodeRole("viewer"))).toEqual({ type: "role", role: "viewer" });
+  });
+
+  it("rejects an unknown role", () => {
+    expect(() => decodeMessage(Uint8Array.of(6, 5, 97, 100, 109, 105, 110))).toThrow(ProtocolError);
+  });
+});

@@ -1,9 +1,38 @@
-import { type Message, decodeMessage, encodeSyncStep2, encodeUpdate } from "@brahma/protocol";
+import {
+  type Message,
+  type TokenRole,
+  decodeMessage,
+  encodeSyncStep2,
+  encodeUpdate,
+  signSyncToken,
+} from "@brahma/protocol";
+import { testSigningKey } from "./keys";
 import { SELF } from "cloudflare:test";
 import * as Y from "yjs";
 
 export function newDocumentId(): string {
   return crypto.randomUUID();
+}
+
+/** Who a test socket connects as. */
+export interface TestUser {
+  sub: string;
+  role: TokenRole;
+  av: number;
+  name: string;
+}
+
+export const EDITOR: TestUser = { sub: "user-editor", role: "editor", av: 1, name: "Ada" };
+export const VIEWER: TestUser = { sub: "user-viewer", role: "viewer", av: 1, name: "Vera" };
+export const OWNER: TestUser = { sub: "user-owner", role: "owner", av: 0, name: "Olu" };
+
+/** A signed sync token, as the Next app would issue it. `issuedAt` shifts the lifetime. */
+export function tokenFor(documentId: string, user: TestUser, issuedAt?: number): Promise<string> {
+  return signSyncToken(
+    { sub: user.sub, doc: documentId, role: user.role, av: user.av, name: user.name, image: null },
+    testSigningKey(),
+    issuedAt,
+  );
 }
 
 export interface Closed {
@@ -21,7 +50,10 @@ export class TestClient {
   closed: Closed | null = null;
   private waiters: Array<() => void> = [];
 
-  private constructor(readonly ws: WebSocket) {
+  private constructor(
+    readonly ws: WebSocket,
+    readonly response: Response,
+  ) {
     ws.binaryType = "arraybuffer";
     ws.addEventListener("message", (event) => {
       const message = decodeMessage(new Uint8Array(event.data as ArrayBuffer));
@@ -37,13 +69,23 @@ export class TestClient {
     });
   }
 
-  static async connect(documentId: string, headers: Record<string, string> = {}): Promise<TestClient> {
-    const response = await SELF.fetch(`http://sync.test/documents/${documentId}`, {
-      headers: { Upgrade: "websocket", ...headers },
+  /** Upgrade without opening a client; for checking HTTP refusals. */
+  static async rawUpgrade(documentId: string, headers: Record<string, string>): Promise<Response> {
+    return SELF.fetch(`http://sync.test/documents/${documentId}`, { headers: { Upgrade: "websocket", ...headers } });
+  }
+
+  static async connect(
+    documentId: string,
+    options: { as?: TestUser; token?: string; headers?: Record<string, string> } = {},
+  ): Promise<TestClient> {
+    const token = options.token ?? (await tokenFor(documentId, options.as ?? EDITOR));
+    const response = await TestClient.rawUpgrade(documentId, {
+      "Sec-WebSocket-Protocol": `brahma.v1, auth.${token}`,
+      ...options.headers,
     });
     if (!response.webSocket) throw new Error(`No WebSocket: ${response.status}`);
     response.webSocket.accept();
-    return new TestClient(response.webSocket);
+    return new TestClient(response.webSocket, response);
   }
 
   private notify(): void {

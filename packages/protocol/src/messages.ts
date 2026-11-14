@@ -12,6 +12,8 @@ import type * as Y from "yjs";
  *   1 AWARENESS         an awareness update (presence: name, color, cursor)
  *   3 QUERY_AWARENESS   no payload; "please send me your awareness state"
  *   4 ACK               varUint count; Brahma-specific, server to client only
+ *   5 AUTH              varString token; client to server, a refreshed sync token
+ *   6 ROLE              varString role; server to client, the socket's role changed live
  *
  * Sync sub-types, from y-protocols/sync:
  *   0 STEP_1  varUint8Array state vector: "this is what I have"
@@ -22,6 +24,8 @@ export const MESSAGE_SYNC = 0;
 export const MESSAGE_AWARENESS = 1;
 export const MESSAGE_QUERY_AWARENESS = 3;
 export const MESSAGE_ACK = 4;
+export const MESSAGE_AUTH = 5;
+export const MESSAGE_ROLE = 6;
 
 export const SYNC_STEP_1 = syncProtocol.messageYjsSyncStep1;
 export const SYNC_STEP_2 = syncProtocol.messageYjsSyncStep2;
@@ -33,7 +37,9 @@ export type Message =
   | { type: "update"; update: Uint8Array }
   | { type: "awareness"; update: Uint8Array }
   | { type: "query-awareness" }
-  | { type: "ack"; count: number };
+  | { type: "ack"; count: number }
+  | { type: "auth"; token: string }
+  | { type: "role"; role: "owner" | "editor" | "viewer" };
 
 export class ProtocolError extends Error {
   override name = "ProtocolError";
@@ -91,6 +97,22 @@ export function encodeAck(count: number): Uint8Array {
   });
 }
 
+/** A refreshed sync token, sent on the open socket before the current one expires. */
+export function encodeAuth(token: string): Uint8Array {
+  return frame((encoder) => {
+    encoding.writeVarUint(encoder, MESSAGE_AUTH);
+    encoding.writeVarString(encoder, token);
+  });
+}
+
+/** The socket's role changed (downgrade or upgrade); the client adjusts without reconnecting. */
+export function encodeRole(role: "owner" | "editor" | "viewer"): Uint8Array {
+  return frame((encoder) => {
+    encoding.writeVarUint(encoder, MESSAGE_ROLE);
+    encoding.writeVarString(encoder, role);
+  });
+}
+
 /**
  * Parse one message without applying it. Throws ProtocolError for unknown
  * types, truncated payloads or trailing bytes, so a caller can reject the
@@ -125,6 +147,13 @@ function readMessage(decoder: decoding.Decoder): Message {
       return { type: "query-awareness" };
     case MESSAGE_ACK:
       return { type: "ack", count: decoding.readVarUint(decoder) };
+    case MESSAGE_AUTH:
+      return { type: "auth", token: decoding.readVarString(decoder) };
+    case MESSAGE_ROLE: {
+      const role = decoding.readVarString(decoder);
+      if (role !== "owner" && role !== "editor" && role !== "viewer") throw new ProtocolError(`Unknown role ${role}`);
+      return { type: "role", role };
+    }
     default:
       throw new ProtocolError(`Unknown message type ${type}`);
   }

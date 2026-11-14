@@ -21,6 +21,25 @@ export class RoomStorage {
     sql.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     sql.exec("CREATE TABLE IF NOT EXISTS snapshot (chunk INTEGER PRIMARY KEY, data BLOB NOT NULL)");
     sql.exec("CREATE TABLE IF NOT EXISTS updates (seq INTEGER PRIMARY KEY AUTOINCREMENT, data BLOB NOT NULL)");
+    // Latest known access per user, from the Next app. role NULL means removed.
+    sql.exec("CREATE TABLE IF NOT EXISTS access (user_id TEXT PRIMARY KEY, role TEXT, version INTEGER NOT NULL)");
+  }
+
+  /** The most recent access change for a user, if the room has heard of one. */
+  getAccess(userId: string): { role: "editor" | "viewer" | null; version: number } | null {
+    const rows = this.sql
+      .exec<{ role: string | null; version: number }>("SELECT role, version FROM access WHERE user_id = ?", userId)
+      .toArray();
+    if (rows.length === 0) return null;
+    return { role: rows[0].role as "editor" | "viewer" | null, version: rows[0].version };
+  }
+
+  /** Record an access change; an older version than the one stored is ignored. */
+  setAccess(userId: string, role: "editor" | "viewer" | null, version: number): boolean {
+    const current = this.getAccess(userId);
+    if (current && current.version >= version) return false;
+    this.sql.exec("INSERT OR REPLACE INTO access (user_id, role, version) VALUES (?, ?, ?)", userId, role, version);
+    return true;
   }
 
   private getMeta(key: string): string | null {

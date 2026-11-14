@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Awareness, encodeAwarenessUpdate } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { memoryStore } from "../src/store";
-import { TestClient, newDocumentId } from "./client";
+import { EDITOR, type TestUser, TestClient, newDocumentId } from "./client";
 
 function seed(title = "", text = ""): string {
   const id = newDocumentId();
@@ -33,8 +33,8 @@ function updateRows(id: string): Promise<number> {
 }
 
 /** Connect and finish the handshake so the client holds the server state. */
-async function joined(id: string): Promise<TestClient> {
-  const client = await TestClient.connect(id);
+async function joined(id: string, as: TestUser = EDITOR): Promise<TestClient> {
+  const client = await TestClient.connect(id, { as });
   await client.until(() => client.count("sync-step-1") > 0, "server step 1");
   client.send(encodeSyncStep1(client.doc));
   await client.until(() => client.count("sync-step-2") > 0, "server step 2");
@@ -134,10 +134,10 @@ describe("sync", () => {
 });
 
 describe("presence", () => {
-  function awarenessUpdate(name: string): { awareness: Awareness; update: Uint8Array } {
+  function awarenessUpdate(name: string, userId = EDITOR.sub): { awareness: Awareness; update: Uint8Array } {
     const doc = new Y.Doc();
     const awareness = new Awareness(doc);
-    awareness.setLocalStateField("user", { name });
+    awareness.setLocalStateField("user", { id: userId, name });
     const update = encodeAwarenessUpdate(awareness, [doc.clientID]);
     awareness.destroy();
     return { awareness, update };

@@ -25,12 +25,24 @@ export const LOCAL_EDIT_LIMIT_BYTES = 1024 * 1024;
  */
 export const CLOSE_MALFORMED = 1007;
 export const CLOSE_TOO_LARGE = 1009;
+export const CLOSE_POLICY = 1008;
 export const CLOSE_INVALID_ID = 4400;
+/** Token missing, invalid or expired: fetch a new one and reconnect. */
+export const CLOSE_UNAUTHENTICATED = 4401;
+/** Access to the document was removed. */
+export const CLOSE_ACCESS_REVOKED = 4403;
+/** A viewer's socket sent a write. */
+export const CLOSE_READ_ONLY = 4405;
 export const CLOSE_NOT_FOUND = 4404;
 export const CLOSE_DELETED = 4410;
 
 /** Close codes after which a client must not reconnect. */
-export const TERMINAL_CLOSE_CODES: ReadonlySet<number> = new Set([CLOSE_INVALID_ID, CLOSE_NOT_FOUND, CLOSE_DELETED]);
+export const TERMINAL_CLOSE_CODES: ReadonlySet<number> = new Set([
+  CLOSE_INVALID_ID,
+  CLOSE_NOT_FOUND,
+  CLOSE_DELETED,
+  CLOSE_ACCESS_REVOKED,
+]);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

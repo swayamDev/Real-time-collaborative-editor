@@ -1,4 +1,5 @@
-import { isDocumentId } from "@brahma/protocol";
+import { isDocumentId, tokenFromSubprotocols, verifySyncToken } from "@brahma/protocol";
+import { identityFromClaims, publicKeys, withoutIdentityHeaders, writeIdentity } from "./identity";
 import { bearerToken, secretMatches } from "./secret";
 
 export { DocumentRoom } from "./room";
@@ -29,18 +30,31 @@ export default {
       // Validate before a Durable Object is ever created for this id.
       if (!isDocumentId(socket[1])) return new Response("Invalid document id", { status: 400 });
       if (!originAllowed(request, env)) return new Response("Origin not allowed", { status: 403 });
-      return roomFor(env, socket[1]).fetch(request);
+
+      // Authenticate before a Durable Object is ever touched. The token
+      // travels in the subprotocol header, so it stays out of URLs and logs.
+      const token = tokenFromSubprotocols(request.headers.get("Sec-WebSocket-Protocol"));
+      if (!token) return new Response("Missing sync token", { status: 401 });
+      let identity;
+      try {
+        identity = identityFromClaims(await verifySyncToken(token, publicKeys(env), socket[1]));
+      } catch {
+        return new Response("Invalid sync token", { status: 401 });
+      }
+      const headers = withoutIdentityHeaders(request.headers);
+      writeIdentity(headers, identity);
+      return roomFor(env, socket[1]).fetch(new Request(request.url, { method: "GET", headers }));
     }
 
     // Called by the Next app for rename and delete from the sidebar.
-    const internal = /^\/internal\/documents\/([^/]+)(\/title)?$/.exec(url.pathname);
+    const internal = /^\/internal\/documents\/([^/]+)(\/title|\/access)?$/.exec(url.pathname);
     if (internal) {
       if (!(await secretMatches(bearerToken(request), env.SYNC_INTERNAL_SECRET))) {
         return new Response("Unauthorized", { status: 401 });
       }
       if (!isDocumentId(internal[1])) return new Response("Invalid document id", { status: 400 });
-      const isTitle = internal[2] === "/title";
-      if ((isTitle && request.method !== "POST") || (!isTitle && request.method !== "DELETE")) {
+      const expected = internal[2] ? "POST" : "DELETE";
+      if (request.method !== expected) {
         return new Response("Method not allowed", { status: 405 });
       }
       return roomFor(env, internal[1]).fetch(request);

@@ -27,6 +27,40 @@ export interface AwarenessChange {
   removed: number[];
 }
 
+export interface AwarenessEntry {
+  clientId: number;
+  clock: number;
+  /** JSON text; "null" means the client left. */
+  state: string;
+}
+
+/** Split an awareness update into entries. Throws on malformed input. */
+export function decodeAwarenessUpdate(update: Uint8Array): AwarenessEntry[] {
+  const decoder = decoding.createDecoder(update);
+  const count = decoding.readVarUint(decoder);
+  const entries: AwarenessEntry[] = [];
+  for (let i = 0; i < count; i++) {
+    const clientId = decoding.readVarUint(decoder);
+    const clock = decoding.readVarUint(decoder);
+    const state = decoding.readVarString(decoder);
+    JSON.parse(state); // must be JSON
+    entries.push({ clientId, clock, state });
+  }
+  if (decoding.hasContent(decoder)) throw new Error("Trailing bytes in awareness update");
+  return entries;
+}
+
+export function encodeAwarenessEntries(entries: readonly AwarenessEntry[]): Uint8Array {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint(encoder, entries.length);
+  for (const { clientId, clock, state } of entries) {
+    encoding.writeVarUint(encoder, clientId);
+    encoding.writeVarUint(encoder, clock);
+    encoding.writeVarString(encoder, state);
+  }
+  return encoding.toUint8Array(encoder);
+}
+
 export class AwarenessRegistry {
   private readonly entries = new Map<number, Entry>();
 

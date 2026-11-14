@@ -1,6 +1,14 @@
 import {
+  CLOSE_ACCESS_REVOKED,
   CLOSE_DELETED,
   CLOSE_MALFORMED,
+  CLOSE_POLICY,
+  CLOSE_READ_ONLY,
+  CLOSE_UNAUTHENTICATED,
+  SYNC_SUBPROTOCOL,
+  type TokenRole,
+  encodeRole,
+  verifySyncToken,
   CLOSE_NOT_FOUND,
   CLOSE_TOO_LARGE,
   MAX_MESSAGE_BYTES,
@@ -18,7 +26,8 @@ import {
 } from "@brahma/protocol";
 import { DurableObject } from "cloudflare:workers";
 import * as Y from "yjs";
-import { AwarenessRegistry } from "./awareness-registry";
+import { AwarenessRegistry, decodeAwarenessUpdate, encodeAwarenessEntries } from "./awareness-registry";
+import { effectiveRole, publicKeys, readIdentity } from "./identity";
 import { RoomStorage } from "./storage";
 import { type SnapshotStore, createSnapshotStore } from "./store";
 
@@ -37,6 +46,22 @@ interface Attachment {
   received: number;
   /** Awareness client ids announced on this socket, removed when it closes. */
   awarenessIds: number[];
+  /** Who is on this socket and what they may do, from their sync token. */
+  userId: string;
+  role: TokenRole;
+  name: string;
+  image: string | null;
+  /** Token expiry, seconds since epoch. */
+  exp: number;
+}
+
+function canWrite(role: TokenRole): boolean {
+  return role === "owner" || role === "editor";
+}
+
+/** The 101 response. The selected subprotocol is only ever brahma.v1, never the auth entry. */
+function upgraded(client: WebSocket): Response {
+  return new Response(null, { status: 101, webSocket: client, headers: { "Sec-WebSocket-Protocol": SYNC_SUBPROTOCOL } });
 }
 
 type LoadResult = "ok" | "not-found" | "deleted";
@@ -69,11 +94,18 @@ export class DocumentRoom extends DurableObject<Env> {
   /** Snapshot without waiting for typing to pause (room emptied, rename). */
   private snapshotUrgent = false;
   private tombstoneChecked = false;
+  /** Which socket owns each awareness client id; another socket may not use it. */
+  private readonly awarenessOwners = new Map<number, WebSocket>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.storage = new RoomStorage(ctx.storage.sql);
     this.store = createSnapshotStore(env);
+    // After hibernation, rebuild which socket owns which presence id.
+    for (const ws of ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as Attachment | null;
+      attachment?.awarenessIds.forEach((id) => this.awarenessOwners.set(id, ws));
+    }
     // SQLite reads are synchronous, so an initialized room is ready at once.
     if (this.storage.isInitialized()) {
       this.attachDoc(this.buildDoc(this.storage.loadUpdates()));
@@ -89,27 +121,45 @@ export class DocumentRoom extends DurableObject<Env> {
     const documentId = path.split("/")[2]?.toLowerCase() ?? "";
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
+    // A browser cannot read the status of a failed upgrade, so accept and
+    // close with a code the client understands.
+    const refuse = (code: number, reason: string) => {
+      server.accept();
+      server.close(code, reason);
+      return upgraded(client);
+    };
+
+    // Set by the router after verifying the token; never by a client.
+    const identity = readIdentity(request.headers);
+    if (!identity) return refuse(CLOSE_UNAUTHENTICATED, "Missing identity");
 
     const result = await this.ensureLoaded(documentId);
-    if (result !== "ok") {
-      // A browser cannot read the status of a failed upgrade, so accept and
-      // close with a code the client understands.
-      server.accept();
-      if (result === "deleted") server.close(CLOSE_DELETED, "Document deleted");
-      else server.close(CLOSE_NOT_FOUND, "Document not found");
-      return new Response(null, { status: 101, webSocket: client });
-    }
+    if (result === "deleted") return refuse(CLOSE_DELETED, "Document deleted");
+    if (result !== "ok") return refuse(CLOSE_NOT_FOUND, "Document not found");
+
+    const role = effectiveRole(identity, this.storage.getAccess(identity.userId));
+    if (!role) return refuse(CLOSE_ACCESS_REVOKED, "Access removed");
 
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ received: 0, awarenessIds: [] } satisfies Attachment);
+    server.serializeAttachment({
+      received: 0,
+      awarenessIds: [],
+      userId: identity.userId,
+      role,
+      name: identity.name,
+      image: identity.image,
+      exp: identity.exp,
+    } satisfies Attachment);
 
     // Step 1 from the server: the client replies with Step 2 (its edits we lack).
     server.send(encodeSyncStep1(this.doc!));
     const presence = this.awareness.encodeAll();
     if (presence) server.send(encodeAwareness(presence));
     this.restorePresenceAfterWake(server);
+    // The token role may have been capped by a later access change.
+    if (role !== identity.role) server.send(encodeRole(role));
 
-    return new Response(null, { status: 101, webSocket: client });
+    return upgraded(client);
   }
 
   async webSocketMessage(ws: WebSocket, data: ArrayBuffer | string): Promise<void> {
@@ -126,6 +176,16 @@ export class DocumentRoom extends DurableObject<Env> {
       return this.reject(ws, CLOSE_MALFORMED, error instanceof ProtocolError ? error.message : "Malformed message");
     }
 
+    const attachment = ws.deserializeAttachment() as Attachment;
+
+    // A refreshed token keeps a long session going without reconnecting.
+    if (message.type === "auth") return this.refreshToken(ws, attachment, message.token);
+
+    const grace = Number(this.env.TOKEN_GRACE_SECONDS ?? 60);
+    if (Date.now() / 1000 > attachment.exp + grace) {
+      return this.reject(ws, CLOSE_UNAUTHENTICATED, "Sync token expired");
+    }
+
     switch (message.type) {
       case "sync-step-1":
         // The client says what it has; reply with everything it lacks, then
@@ -137,13 +197,26 @@ export class DocumentRoom extends DurableObject<Env> {
 
       case "sync-step-2":
       case "update": {
+        let decoded;
         try {
-          Y.decodeUpdate(message.update);
+          decoded = Y.decodeUpdate(message.update);
+        } catch {
+          return this.reject(ws, CLOSE_MALFORMED, "Invalid Yjs update");
+        }
+        if (!canWrite(attachment.role)) {
+          // A viewer still answers Step 1 with an empty Step 2. Anything that
+          // carries content is a write: never trust the client to enforce
+          // read-only, so drop it and close.
+          const empty = decoded.structs.length === 0 && decoded.ds.clients.size === 0;
+          if (!empty) return this.reject(ws, CLOSE_READ_ONLY, "Viewers cannot edit");
+          this.send(ws, encodeAck(attachment.received));
+          return;
+        }
+        try {
           Y.applyUpdate(doc, message.update, ws);
         } catch {
           return this.reject(ws, CLOSE_MALFORMED, "Invalid Yjs update");
         }
-        const attachment = ws.deserializeAttachment() as Attachment;
         attachment.received += 1;
         ws.serializeAttachment(attachment);
         this.pendingAcks.add(ws);
@@ -152,19 +225,18 @@ export class DocumentRoom extends DurableObject<Env> {
       }
 
       case "awareness": {
-        let change;
-        try {
-          change = this.awareness.apply(message.update);
-        } catch {
-          return this.reject(ws, CLOSE_MALFORMED, "Invalid awareness update");
-        }
-        const attachment = ws.deserializeAttachment() as Attachment;
+        const bound = this.bindAwareness(ws, attachment, message.update);
+        if (bound === "malformed") return this.reject(ws, CLOSE_MALFORMED, "Invalid awareness update");
+        if (bound === "spoofed") return this.reject(ws, CLOSE_POLICY, "Presence does not match the signed-in user");
+        const change = this.awareness.apply(bound);
+        change.present.forEach((id) => this.awarenessOwners.set(id, ws));
+        change.removed.forEach((id) => this.awarenessOwners.delete(id));
         const ids = new Set(attachment.awarenessIds);
         change.present.forEach((id) => ids.add(id));
         change.removed.forEach((id) => ids.delete(id));
         attachment.awarenessIds = [...ids].slice(0, 32);
         ws.serializeAttachment(attachment);
-        this.broadcast(encodeAwareness(message.update), ws);
+        this.broadcast(encodeAwareness(bound), ws);
         return;
       }
 
@@ -175,8 +247,55 @@ export class DocumentRoom extends DurableObject<Env> {
       }
 
       case "ack":
-        return this.reject(ws, CLOSE_MALFORMED, "Clients do not send acks");
+      case "role":
+        return this.reject(ws, CLOSE_MALFORMED, "Clients do not send this message");
     }
+  }
+
+  /**
+   * Presence is bound to identity. Each awareness client id belongs to the
+   * socket that first announced it, and every state must carry the socket
+   * user id. Name and avatar are replaced with the token values, so nobody
+   * can appear as someone else. Returns the rewritten update.
+   */
+  private bindAwareness(ws: WebSocket, attachment: Attachment, update: Uint8Array): Uint8Array | "malformed" | "spoofed" {
+    let entries;
+    try {
+      entries = decodeAwarenessUpdate(update);
+    } catch {
+      return "malformed";
+    }
+    for (const entry of entries) {
+      const owner = this.awarenessOwners.get(entry.clientId);
+      if (owner && owner !== ws) return "spoofed";
+      if (entry.state === "null") continue;
+      const state = JSON.parse(entry.state) as { user?: Record<string, unknown> } | null;
+      if (typeof state !== "object" || state === null || typeof state.user !== "object" || state.user === null) {
+        return "spoofed";
+      }
+      if (state.user.id !== attachment.userId) return "spoofed";
+      state.user = { ...state.user, id: attachment.userId, name: attachment.name, image: attachment.image };
+      entry.state = JSON.stringify(state);
+    }
+    return encodeAwarenessEntries(entries);
+  }
+
+  /** Swap in a newer token for the same user and document, applying later access changes. */
+  private async refreshToken(ws: WebSocket, attachment: Attachment, token: string): Promise<void> {
+    const documentId = this.storage.documentId() ?? "";
+    let claims;
+    try {
+      claims = await verifySyncToken(token, publicKeys(this.env), documentId);
+    } catch {
+      return this.reject(ws, CLOSE_UNAUTHENTICATED, "Invalid sync token");
+    }
+    if (claims.sub !== attachment.userId) return this.reject(ws, CLOSE_UNAUTHENTICATED, "Token for another user");
+    const role = effectiveRole(claims, this.storage.getAccess(claims.sub));
+    if (!role) return this.reject(ws, CLOSE_ACCESS_REVOKED, "Access removed");
+    const changed = role !== attachment.role;
+    Object.assign(attachment, { role, exp: claims.exp, name: claims.name, image: claims.image });
+    ws.serializeAttachment(attachment);
+    if (changed) this.send(ws, encodeRole(role));
   }
 
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {
@@ -201,6 +320,7 @@ export class DocumentRoom extends DurableObject<Env> {
       await this.deleteRoom();
       return new Response(null, { status: 204 });
     }
+    if (new URL(request.url).pathname.endsWith("/access")) return this.applyAccess(request);
 
     let title: unknown;
     try {
@@ -224,6 +344,37 @@ export class DocumentRoom extends DurableObject<Env> {
     // The sidebar list reads the column, so snapshot right away.
     this.snapshotSoon();
     return Response.json({ title: cleaned });
+  }
+
+  /**
+   * Live access changes from the Next app: record them (so older tokens are
+   * capped or refused) and adjust that user's open sockets at once.
+   */
+  private async applyAccess(request: Request): Promise<Response> {
+    let changes: Array<{ userId: unknown; role: unknown; accessVersion: unknown }>;
+    try {
+      changes = ((await request.json()) as { changes?: typeof changes }).changes ?? [];
+    } catch {
+      return Response.json({ error: "Body must be JSON." }, { status: 400 });
+    }
+    for (const change of changes) {
+      const { userId, role, accessVersion } = change;
+      if (typeof userId !== "string" || typeof accessVersion !== "number") continue;
+      if (role !== null && role !== "editor" && role !== "viewer") continue;
+      if (!this.storage.setAccess(userId, role, accessVersion)) continue;
+      for (const ws of this.ctx.getWebSockets()) {
+        const attachment = ws.deserializeAttachment() as Attachment | null;
+        if (!attachment || attachment.userId !== userId || attachment.role === "owner") continue;
+        if (role === null) {
+          this.reject(ws, CLOSE_ACCESS_REVOKED, "Access removed");
+        } else if (attachment.role !== role) {
+          attachment.role = role;
+          ws.serializeAttachment(attachment);
+          this.send(ws, encodeRole(role));
+        }
+      }
+    }
+    return new Response(null, { status: 204 });
   }
 
   // Loading
@@ -441,6 +592,9 @@ export class DocumentRoom extends DurableObject<Env> {
   private removeSocket(ws: WebSocket): void {
     this.pendingAcks.delete(ws);
     const attachment = ws.deserializeAttachment() as Attachment | null;
+    attachment?.awarenessIds.forEach((id) => {
+      if (this.awarenessOwners.get(id) === ws) this.awarenessOwners.delete(id);
+    });
     const removal = attachment ? this.awareness.remove(attachment.awarenessIds) : null;
     if (removal) this.broadcast(encodeAwareness(removal), ws);
   }
