@@ -17,7 +17,9 @@ vi.mock("resend", () => ({
 // Each test builds a fresh auth instance; the first import is slow.
 vi.setConfig({ testTimeout: 30_000 });
 
-beforeEach(() => {
+beforeEach(async () => {
+  // The site-wide link count is shared with other runs (end-to-end tests send many).
+  await db().delete(appRateLimits).where(like(appRateLimits.key, "magicLinkSiteWide:%"));
   process.env.BETTER_AUTH_URL = BASE;
   process.env.BETTER_AUTH_SECRET ??= "integration-test-secret-integration-test";
   process.env.EMAIL_TRANSPORT = "file";

@@ -1,24 +1,20 @@
-import type { Browser, BrowserContext, Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
-import { createDocument, expectSaved, mod, sidebarRow, uniqueTitle } from "./helpers";
+import type { Page } from "@playwright/test";
+import { type Accounts, expect, test } from "./fixtures";
+import { caretAtEnd, createDocument, expectSaved, mod, share, sidebarRow, uniqueTitle } from "./helpers";
 import { startSyncServer, stopSyncServer } from "./sync-server";
 
-const opened: BrowserContext[] = [];
+// Signed-in people on several devices: more setup than a single page.
+test.describe.configure({ timeout: 90_000 });
 
-/** A browser context with its own guest name, like a second person. */
-async function person(browser: Browser, name: string): Promise<Page> {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-  opened.push(context);
-  await context.addCookies([{ name: "brahma-name", value: encodeURIComponent(name), url: "http://localhost:3100" }]);
-  return context.newPage();
-}
-
-/** Ada creates a document; Grace opens the same one. */
-async function pair(browser: Browser): Promise<{ a: Page; b: Page; url: string }> {
-  const a = await person(browser, "Ada");
-  const b = await person(browser, "Grace");
+/** Ada creates a document and shares it with Grace as an editor; both have it open. */
+async function pair(
+  { accounts, openAs }: { accounts: Accounts; openAs: (account: Accounts["ada"]) => Promise<Page> },
+): Promise<{ a: Page; b: Page; url: string }> {
+  const a = await openAs(accounts.ada);
+  const b = await openAs(accounts.grace);
   await createDocument(a);
   await expectSaved(a);
+  await share(a, accounts.grace.email, "editor");
   const url = a.url();
   await b.goto(url);
   await expectSaved(b);
@@ -43,26 +39,15 @@ async function expectText(page: Page, expected: string): Promise<void> {
   await expect.poll(() => text(page), { timeout: 10_000 }).toBe(expected);
 }
 
-/** Put the caret at the end of the body. */
-async function caretAtEnd(page: Page): Promise<void> {
-  await body(page).click();
-  await page.keyboard.press(`${mod}+End`);
-}
-
-// Close only the contexts this file opened; the built-in one is traced.
-test.afterEach(async () => {
-  for (const context of opened.splice(0)) await context.close();
-});
-
-test("typing in A appears in B", async ({ browser }) => {
-  const { a, b } = await pair(browser);
+test("typing in A appears in B", async ({ accounts, openAs }) => {
+  const { a, b } = await pair({ accounts, openAs });
   await a.getByTestId("title").press("Enter");
   await a.keyboard.type("Hello from Ada");
   await expectText(b, "Hello from Ada");
 });
 
-test("concurrent typing at the same position converges in both", async ({ browser }) => {
-  const { a, b } = await pair(browser);
+test("concurrent typing at the same position converges in both", async ({ accounts, openAs }) => {
+  const { a, b } = await pair({ accounts, openAs });
   await a.getByTestId("title").press("Enter");
   await a.keyboard.type("Start.");
   await expectText(b, "Start.");
@@ -84,8 +69,8 @@ test("concurrent typing at the same position converges in both", async ({ browse
   }
 });
 
-test("title edits sync both ways", async ({ browser }) => {
-  const { a, b } = await pair(browser);
+test("title edits sync both ways", async ({ accounts, openAs }) => {
+  const { a, b } = await pair({ accounts, openAs });
   await a.getByTestId("title").fill("Launch review");
   await expect(b.getByTestId("title")).toHaveValue("Launch review");
   await expect(b.getByTestId("breadcrumb-title")).toHaveText("Launch review");
@@ -95,8 +80,8 @@ test("title edits sync both ways", async ({ browser }) => {
   await expect(a.getByTestId("title")).toHaveValue("Launch review notes");
 });
 
-test("carets and names are visible to the other person", async ({ browser }) => {
-  const { a, b } = await pair(browser);
+test("carets and names are visible to the other person", async ({ accounts, openAs }) => {
+  const { a, b } = await pair({ accounts, openAs });
   await a.getByTestId("title").press("Enter");
   await a.keyboard.type("Where is everyone?");
   await caretAtEnd(b);
@@ -111,8 +96,8 @@ test("carets and names are visible to the other person", async ({ browser }) => 
   expect(await color(a)).not.toBe(await color(b));
 });
 
-test("undo in A does not undo B's edits", async ({ browser }) => {
-  const { a, b } = await pair(browser);
+test("undo in A does not undo B's edits", async ({ accounts, openAs }) => {
+  const { a, b } = await pair({ accounts, openAs });
   await a.getByTestId("title").press("Enter");
   await a.keyboard.type("alpha");
   await expectSaved(a);
@@ -128,8 +113,8 @@ test("undo in A does not undo B's edits", async ({ browser }) => {
   await expectText(b, " beta");
 });
 
-test("reloading B mid-session loses nothing", async ({ browser }) => {
-  const { a, b } = await pair(browser);
+test("reloading B mid-session loses nothing", async ({ accounts, openAs }) => {
+  const { a, b } = await pair({ accounts, openAs });
   await a.getByTestId("title").press("Enter");
   await a.keyboard.type("Before reload.");
   await caretAtEnd(b);
@@ -151,8 +136,8 @@ test("reloading B mid-session loses nothing", async ({ browser }) => {
 });
 
 test.describe("when the sync server goes down", () => {
-  test("clients show Reconnecting with edits saved on the device, then recover with no lost edits", async ({ browser }) => {
-    const { a, b, url } = await pair(browser);
+  test("clients show Reconnecting with edits saved on the device, then recover with no lost edits", async ({ accounts, openAs }) => {
+    const { a, b, url } = await pair({ accounts, openAs });
     await a.getByTestId("title").press("Enter");
     await a.keyboard.type("Before the outage.");
     await expectText(b, "Before the outage.");
@@ -179,8 +164,8 @@ test.describe("when the sync server goes down", () => {
     expect(merged).toContain("Ada offline.");
     expect(merged).toContain("Grace offline.");
 
-    // And it was stored: a fresh page sees the same content.
-    const c = await person(browser, "Katherine");
+    // And it was stored: a fresh device sees the same content.
+    const c = await openAs(accounts.ada);
     await c.goto(url);
     await expectSaved(c);
     await expectText(c, merged);

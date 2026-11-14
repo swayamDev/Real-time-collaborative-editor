@@ -1,34 +1,20 @@
-import type { Browser, BrowserContext, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import {
   bodyText,
+  caretAtEnd,
   createDocument,
   expectBody,
   expectReadyOffline,
   expectSaved,
   expectStatus,
-  mod,
+  share,
   sidebarRow,
   uniqueTitle,
 } from "./helpers";
 
-const opened: BrowserContext[] = [];
-
-async function newContext(browser: Browser, name: string): Promise<BrowserContext> {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-  await context.addCookies([{ name: "brahma-name", value: encodeURIComponent(name), url: "http://localhost:3100" }]);
-  opened.push(context);
-  return context;
-}
-
-test.afterEach(async () => {
-  for (const context of opened.splice(0)) await context.close();
-});
-
-async function caretAtEnd(page: Page): Promise<void> {
-  await page.getByTestId("editor").click();
-  await page.keyboard.press(`${mod}+End`);
-}
+// Signed-in people on several devices: more setup than a single page.
+test.describe.configure({ timeout: 90_000 });
 
 /** A document with a title and some text, synced and ready to work offline. */
 async function documentReadyOffline(page: Page, text: string): Promise<string> {
@@ -41,8 +27,8 @@ async function documentReadyOffline(page: Page, text: string): Promise<string> {
   return page.url();
 }
 
-test("edits made offline survive a reload while still offline", async ({ browser }) => {
-  const context = await newContext(browser, "Ada");
+test("edits made offline survive a reload while still offline", async ({ accounts, contextAs }) => {
+  const context = await contextAs(accounts.ada);
   const page = await context.newPage();
   await documentReadyOffline(page, "Online.");
 
@@ -58,10 +44,11 @@ test("edits made offline survive a reload while still offline", async ({ browser
   await expect(page.getByTestId("title")).toBeEditable();
 });
 
-test("edits from a tab closed offline reach the server and another person", async ({ browser }) => {
-  const context = await newContext(browser, "Ada");
+test("edits from a tab closed offline reach the server and another person", async ({ accounts, contextAs, openAs }) => {
+  const context = await contextAs(accounts.ada);
   let page = await context.newPage();
   const url = await documentReadyOffline(page, "Start.");
+  await share(page, accounts.grace.email, "viewer");
 
   await context.setOffline(true);
   await caretAtEnd(page);
@@ -78,17 +65,18 @@ test("edits from a tab closed offline reach the server and another person", asyn
   await expectSaved(page);
   await expect(sidebarRow(page, "Offline").getByTestId("unsynced-marker")).toHaveCount(0);
 
-  const other = await (await newContext(browser, "Grace")).newPage();
+  const other = await openAs(accounts.grace);
   await other.goto(url);
   await expectSaved(other);
   await expectBody(other, "Start. Written offline.");
 });
 
-test("two people editing the same paragraph offline converge to identical text", async ({ browser }) => {
-  const aContext = await newContext(browser, "Ada");
+test("two people editing the same paragraph offline converge to identical text", async ({ accounts, contextAs }) => {
+  const aContext = await contextAs(accounts.ada);
   const a = await aContext.newPage();
   const url = await documentReadyOffline(a, "Shared paragraph.");
-  const bContext = await newContext(browser, "Grace");
+  await share(a, accounts.grace.email, "editor");
+  const bContext = await contextAs(accounts.grace);
   const b = await bContext.newPage();
   await b.goto(url);
   await expectSaved(b);
@@ -114,8 +102,8 @@ test("two people editing the same paragraph offline converge to identical text",
   expect(merged).toContain("Grace adds that.");
 });
 
-test("two tabs on one device stay in sync while offline", async ({ browser }) => {
-  const context = await newContext(browser, "Ada");
+test("two tabs on one device stay in sync while offline", async ({ accounts, contextAs }) => {
+  const context = await contextAs(accounts.ada);
   const first = await context.newPage();
   const url = await documentReadyOffline(first, "Tab one.");
   const second = await context.newPage();
@@ -131,8 +119,8 @@ test("two tabs on one device stay in sync while offline", async ({ browser }) =>
   await expectBody(first, "Tab one. Typed in tab one while offline. And tab two.");
 });
 
-test("more than 1 MiB of offline edits syncs", async ({ browser }) => {
-  const context = await newContext(browser, "Ada");
+test("more than 1 MiB of offline edits syncs", async ({ accounts, contextAs, openAs }) => {
+  const context = await contextAs(accounts.ada);
   const page = await context.newPage();
   const url = await documentReadyOffline(page, "Big.");
 
@@ -152,14 +140,15 @@ test("more than 1 MiB of offline edits syncs", async ({ browser }) => {
   expect(sent.filter((size) => size > 100_000).length).toBeGreaterThan(1);
   expect(Math.max(...sent)).toBeLessThan(4 * 1024 * 1024);
 
-  const other = await (await newContext(browser, "Grace")).newPage();
+  // Ada on another device loads it from the server.
+  const other = await openAs(accounts.ada);
   await other.goto(url);
   await expectSaved(other);
   await expect.poll(async () => (await bodyText(other)).length, { timeout: 20_000 }).toBe(4 + 1_200_000);
 });
 
-test("a document deleted while offline offers to keep the offline edits", async ({ browser }) => {
-  const aContext = await newContext(browser, "Ada");
+test("a document deleted while offline offers to keep the offline edits", async ({ accounts, contextAs, openAs }) => {
+  const aContext = await contextAs(accounts.ada);
   const a = await aContext.newPage();
   const url = await documentReadyOffline(a, "Before.");
   const title = await a.getByTestId("title").inputValue();
@@ -169,8 +158,8 @@ test("a document deleted while offline offers to keep the offline edits", async 
   await a.keyboard.type(" Kept offline.");
   await expectStatus(a, "Saved on this device");
 
-  // Someone else deletes it meanwhile.
-  const b = await (await newContext(browser, "Grace")).newPage();
+  // Ada deletes it meanwhile on another device (only the owner can delete).
+  const b = await openAs(accounts.ada);
   await b.goto(url);
   await expectSaved(b);
   const row = sidebarRow(b, title);
@@ -191,14 +180,14 @@ test("a document deleted while offline offers to keep the offline edits", async 
   await expect(a.getByTestId("title")).toHaveValue(title);
 
   const copyUrl = a.url();
-  const c = await (await newContext(browser, "Katherine")).newPage();
+  const c = await openAs(accounts.ada);
   await c.goto(copyUrl);
   await expectSaved(c);
   await expectBody(c, "Before. Kept offline.");
 });
 
-test("clearing IndexedDB recovers the document from the server", async ({ browser }) => {
-  const context = await newContext(browser, "Ada");
+test("clearing IndexedDB recovers the document from the server", async ({ accounts, contextAs }) => {
+  const context = await contextAs(accounts.ada);
   let page = await context.newPage();
   await createDocument(page);
   const title = uniqueTitle("Recover");
@@ -212,16 +201,22 @@ test("clearing IndexedDB recovers the document from the server", async ({ browse
   // A page on this origin with no app code holding the database open.
   page = await context.newPage();
   await page.goto("/sw.js");
-  const deleted = await page.evaluate(
-    () =>
-      new Promise<string>((resolve) => {
-        const request = indexedDB.deleteDatabase("brahma");
-        request.onsuccess = () => resolve("deleted");
-        request.onerror = () => resolve("error");
-        request.onblocked = () => resolve("blocked");
-      }),
-  );
-  expect(deleted).toBe("deleted");
+  // Each user has their own database: brahma:<user id>.
+  const deleted = await page.evaluate(async () => {
+    const names = (await indexedDB.databases()).map((info) => info.name ?? "").filter((name) => name.startsWith("brahma:"));
+    return Promise.all(
+      names.map(
+        (name) =>
+          new Promise<string>((resolve) => {
+            const request = indexedDB.deleteDatabase(name);
+            request.onsuccess = () => resolve("deleted");
+            request.onerror = () => resolve("error");
+            request.onblocked = () => resolve("blocked");
+          }),
+      ),
+    );
+  });
+  expect(deleted).toEqual(["deleted"]);
 
   await page.goto(url);
   await expectSaved(page);

@@ -1,4 +1,7 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { like } from "drizzle-orm";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { db } from "@/db/client";
+import { appRateLimits } from "@/db/schema";
 
 const BASE = "http://localhost:3100";
 vi.setConfig({ testTimeout: 30_000 });
@@ -10,6 +13,11 @@ beforeAll(async () => {
   process.env.EMAIL_TRANSPORT = "file";
   vi.resetModules();
   auth = (await import("@/server/auth")).auth;
+});
+
+// The site-wide link count is shared with other runs (end-to-end tests send many).
+beforeEach(async () => {
+  await db().delete(appRateLimits).where(like(appRateLimits.key, "magicLinkSiteWide:%"));
 });
 
 function post(path: string, headers: Record<string, string>, body: unknown = {}) {

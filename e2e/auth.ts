@@ -41,6 +41,9 @@ function clientAddress(): string {
  * (AUTH_CLIENT_IP_HEADER in playwright.config.ts).
  */
 export async function signIn(page: Page, email: string): Promise<void> {
+  // Contexts start with the default account's session (fixtures.ts); drop
+  // any session so this signs in as exactly this person.
+  await page.context().clearCookies();
   await page.context().setExtraHTTPHeaders({ "x-forwarded-for": clientAddress() });
   rmSync(join(OUTBOX, `${email.toLowerCase()}.txt`), { force: true });
   await page.goto("/sign-in");

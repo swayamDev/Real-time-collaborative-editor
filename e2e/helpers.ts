@@ -83,5 +83,46 @@ export async function expectBody(page: Page, expected: string, timeout = 15_000)
 }
 
 export async function expectStatus(page: Page, label: string, timeout = 15_000): Promise<void> {
-  await expect(page.getByTestId("sync-status")).toHaveText(label, { timeout });
+  const status = page.getByTestId("sync-status");
+  await expect(status).toHaveText(label, { timeout });
+  // "Saved on this device" shows while the newest keystrokes are still being
+  // written (the label waits a second before saying "Saving"); wait for them.
+  if (label === "Saved on this device") await expect(status).toHaveAttribute("data-unwritten", "false", { timeout });
+}
+
+/** Put the caret at the end of the body. */
+export async function caretAtEnd(page: Page): Promise<void> {
+  await page.getByTestId("editor").click();
+  await page.keyboard.press(`${mod}+End`);
+}
+
+/** The owner shares the open document with `email` through the share dialog. */
+export async function share(owner: Page, email: string, role: "editor" | "viewer"): Promise<void> {
+  await owner.getByTestId("share-button").click();
+  const dialog = owner.getByTestId("share-dialog");
+  await dialog.getByPlaceholder("Email address").fill(email);
+  await dialog.getByRole("combobox", { name: "Role for the invite" }).selectOption(role);
+  await dialog.getByRole("button", { name: "Invite", exact: true }).click();
+  await expect(dialog.locator(`[data-testid="share-member"][data-email="${email}"]`)).toBeVisible();
+  await owner.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+}
+
+/** The owner changes, or with null removes, someone's access to the open document. */
+export async function setAccess(owner: Page, email: string, role: "editor" | "viewer" | null): Promise<void> {
+  await owner.getByTestId("share-button").click();
+  const dialog = owner.getByTestId("share-dialog");
+  const row = dialog.locator(`[data-testid="share-member"][data-email="${email}"]`);
+  await expect(row).toBeVisible();
+  if (role === null) {
+    await row.getByRole("button", { name: "Remove" }).click();
+    await expect(row).toHaveCount(0);
+  } else {
+    await row.getByRole("combobox").selectOption(role);
+    await expect(row.getByRole("combobox")).toHaveValue(role);
+  }
+  // The server action has finished (it holds no socket open).
+  await owner.waitForLoadState("networkidle");
+  await owner.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
 }

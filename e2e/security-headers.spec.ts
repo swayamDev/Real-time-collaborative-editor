@@ -11,14 +11,14 @@ const EXPECTED: Record<string, RegExp> = {
   "permissions-policy": /camera=\(\).*microphone=\(\).*geolocation=\(\)/,
 };
 
-test("every kind of response carries the security headers", async ({ page, request }) => {
+test("every kind of response carries the security headers", async ({ page }) => {
   await signIn(page, uniqueEmail("headers"));
   const documentId = await createDocument(page);
   const responses = [
-    await request.get("/sign-in"),
+    await page.request.get("/sign-in"),
     await page.request.get(`/d/${documentId}`),
     await page.request.get("/api/auth/get-session"),
-    await request.get("/sw.js"),
+    await page.request.get("/sw.js"),
   ];
   for (const response of responses) {
     const headers = response.headers();
