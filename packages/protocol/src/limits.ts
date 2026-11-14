@@ -37,6 +37,8 @@ export const CLOSE_NOT_FOUND = 4404;
 export const CLOSE_DELETED = 4410;
 /** The client's document schema is older than one this document has seen: update and reload. */
 export const CLOSE_CLIENT_OUTDATED = 4426;
+/** The client claims a schema newer than this deployment accepts: refused, nothing recorded. */
+export const CLOSE_SCHEMA_UNSUPPORTED = 4427;
 
 /** Close codes after which a client must not reconnect. */
 export const TERMINAL_CLOSE_CODES: ReadonlySet<number> = new Set([

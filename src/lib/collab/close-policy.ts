@@ -7,6 +7,7 @@ import {
   CLOSE_NOT_FOUND,
   CLOSE_POLICY,
   CLOSE_READ_ONLY,
+  CLOSE_SCHEMA_UNSUPPORTED,
   CLOSE_TOO_LARGE,
   CLOSE_UNAUTHENTICATED,
 } from "@brahma/protocol";
@@ -78,6 +79,10 @@ export function closeAction(code: number, context: CloseContext): CloseAction {
       // happening, or there is nothing to split, halt.
       return context.isolating || context.unackedEntries <= 1 ? "halt" : "isolate";
     case CLOSE_POLICY:
+      return "halt";
+    case CLOSE_SCHEMA_UNSUPPORTED:
+      // This bundle is newer than the deployment accepts (a rollback, or a
+      // claim the server does not believe). Reloading would not help: halt.
       return "halt";
     default:
       // Codes 4000 to 4999 are ours. One this client does not know means a

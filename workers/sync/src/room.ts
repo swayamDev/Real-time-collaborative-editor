@@ -1,6 +1,7 @@
 import {
   CLOSE_ACCESS_REVOKED,
   CLOSE_CLIENT_OUTDATED,
+  CLOSE_SCHEMA_UNSUPPORTED,
   CLOSE_DELETED,
   CLOSE_MALFORMED,
   CLOSE_POLICY,
@@ -29,6 +30,7 @@ import { DurableObject } from "cloudflare:workers";
 import * as Y from "yjs";
 import { AwarenessRegistry, decodeAwarenessUpdate, encodeAwarenessEntries } from "./awareness-registry";
 import { effectiveRole, publicKeys, readIdentity } from "./identity";
+import { decideSchema, schemaBounds } from "./schema-policy";
 import { RoomStorage } from "./storage";
 import { type SnapshotStore, createSnapshotStore } from "./store";
 
@@ -143,10 +145,13 @@ export class DocumentRoom extends DurableObject<Env> {
     // A client running an older document schema would remove content made
     // with newer node types (an editor's binding removes what its schema
     // cannot hold). Refuse it before it can send anything; it updates and
-    // reloads. A newer client closes older ones still connected.
-    const newest = this.storage.newestSchema();
-    if (identity.schema < newest) return refuse(CLOSE_CLIENT_OUTDATED, "Brahma was updated");
-    if (identity.schema > newest) this.raiseSchema(identity.schema);
+    // reloads. Claims are only believed within the deployment's bounds, so
+    // no client can lock others out. See schema-policy.ts.
+    const schema = decideSchema(identity.schema, this.storage.newestSchema(), schemaBounds(this.env));
+    if (schema.kind === "unsupported") return refuse(CLOSE_SCHEMA_UNSUPPORTED, "Schema version not supported");
+    if (schema.kind === "outdated") return refuse(CLOSE_CLIENT_OUTDATED, "Brahma was updated");
+    if (schema.record !== null) this.storage.setNewestSchema(schema.record);
+    if (schema.raised) this.closeOlderThan(identity.schema);
 
     const role = effectiveRole(identity, this.storage.getAccess(identity.userId));
     if (!role) return refuse(CLOSE_ACCESS_REVOKED, "Access removed");
@@ -632,9 +637,8 @@ export class DocumentRoom extends DurableObject<Env> {
   }
 
   /** Close one misbehaving socket. The room and every other socket carry on. */
-  /** Record a newer schema version and close every socket running an older one. */
-  private raiseSchema(version: number): void {
-    this.storage.setNewestSchema(version);
+  /** A newer schema version joined: close every socket running an older one. */
+  private closeOlderThan(version: number): void {
     for (const ws of this.ctx.getWebSockets()) {
       const attachment = ws.deserializeAttachment() as Attachment | null;
       if ((attachment?.schema ?? 0) < version) this.reject(ws, CLOSE_CLIENT_OUTDATED, "Brahma was updated");

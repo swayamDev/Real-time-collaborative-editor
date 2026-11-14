@@ -19,6 +19,9 @@ export default defineConfig({
           TEST_SIGNING_KEY: keys.privateJwk,
           // Tests check expiry without waiting a minute.
           TOKEN_GRACE_SECONDS: "0",
+          // Room tests use schema versions 1 to 5.
+          SCHEMA_VERSION_MIN: "1",
+          SCHEMA_VERSION_MAX: "5",
         },
       },
     }),

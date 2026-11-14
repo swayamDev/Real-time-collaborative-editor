@@ -15,6 +15,7 @@ describe("closeAction: one row per code", () => {
     ["4410 runs deleted handling", 4410, {}, "deleted"],
     ["4426 updates and reloads instead of reconnecting", 4426, {}, "outdated"],
     ["4426 with edits in flight still does not reconnect", 4426, { unackedEntries: 3 }, "outdated"],
+    ["4427 (schema newer than the deployment accepts) halts, no reload", 4427, {}, "halt"],
     ["4404 is not found", 4404, {}, "not-found"],
     ["4400 is not found", 4400, {}, "not-found"],
     ["1007 with a batch of edits isolates once", 1007, { unackedEntries: 3 }, "isolate"],

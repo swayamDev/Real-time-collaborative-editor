@@ -11,7 +11,12 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DocumentRoom"] }],
   "vars": {
     // Browser origins allowed to open a WebSocket. Comma separated.
-    "ALLOWED_ORIGINS": "http://localhost:3000,http://localhost:3100"
+    "ALLOWED_ORIGINS": "http://localhost:3000,http://localhost:3100",
+    // Document schema versions this deployment accepts (see "Changing the
+    // document schema" in the README). Clients below MIN update and reload;
+    // claims above MAX are refused and never recorded.
+    "SCHEMA_VERSION_MIN": "1",
+    "SCHEMA_VERSION_MAX": "1"
   },
   "observability": { "enabled": true }
   // Secrets (set in .dev.vars locally, see .dev.vars.example):

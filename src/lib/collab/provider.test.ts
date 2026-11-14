@@ -518,6 +518,15 @@ describe("close codes", () => {
     expect(await pendingCount()).toBe(1);
   });
 
+  it("4427: halts instead of reloading or reconnecting", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.sockets[0].serverClose(4427);
+    await until(() => tab.provider.getStatus() === "halted", "halted");
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets).toHaveLength(1);
+  });
+
   it("1008: halts with no retry", async () => {
     const tab = await openTab();
     await until(() => tab.provider.getStatus() === "saved", "saved");
