@@ -1,14 +1,16 @@
 # Brahma
 
-A collaborative document editor, built in phases. This repository is at **Phase 3**: several people edit the same document live, with presence, through a sync server built on Cloudflare Durable Objects, and Brahma keeps working without a network. Accounts and permissions are Phase 4.
+A collaborative document editor, built in phases. This repository is at **Phase 4**: people sign in, own documents and share them as editors or viewers; several people edit the same document live, with presence, through a sync server built on Cloudflare Durable Objects; and Brahma keeps working without a network. Permissions are enforced on the app server and again on the sync server (see [Auth and permissions](#auth-and-permissions)).
 
 ## What it does
 
-- **Documents.** Create, rename and delete documents (delete asks for confirmation). The sidebar lists them by last edit. Rename needs the sync server ("Couldn't rename. Try again." otherwise); delete works even when it is down (see [Delete](#delete)).
+- **Accounts.** Sign in with Google or an email link. Every document has one owner.
+- **Sharing.** The owner invites people by email as editors or viewers, and can turn on a share link with a role ("Anyone with the link", sign-in required). Roles change and access ends live, even for people who have the document open. The sidebar has "My documents" and "Shared with me".
+- **Documents.** Create, rename and delete documents (delete asks for confirmation; only the owner deletes). The sidebar lists them by last edit. Rename needs the sync server ("Couldn't rename. Try again." otherwise); delete works even when it is down (see [Delete](#delete)).
 - **Editor.** A title plus rich text: headings 1 to 3, bold, italic, strikethrough, inline code, code blocks, bulleted, numbered and task lists, quotes, links and horizontal rules. Markdown shortcuts work (`## `, `- `, `[ ] `, `> `, ` ``` `, `**bold**`, and so on).
 - **Floating toolbar.** Appears only when text is selected: block type menu, inline marks and a link field. `Cmd/Ctrl+K` adds a link, `Alt+F10` moves focus into the toolbar, `Esc` returns to the text.
-- **Live collaboration.** Everyone with the link edits the same document at once. Concurrent edits merge without conflicts, including the title.
-- **Presence.** Each person gets a caret and selection in one of six collaborator colors with a name flag, and an avatar in the top bar. There are no accounts yet: you set a display name from your avatar, kept in a cookie.
+- **Live collaboration.** Everyone with access edits the same document at once; viewers see every edit live but cannot type. Concurrent edits merge without conflicts, including the title.
+- **Presence.** Each person gets a caret and selection in one of six collaborator colors with their account name, and an avatar in the top bar. One person with several tabs counts once.
 - **Undo is yours.** `Cmd/Ctrl+Z` undoes only your own edits, never a collaborator's, in the body and in the title.
 - **Works offline.** Documents opened on this device open, and stay editable, without a network. Edits are written to the device first, survive closing the tab or a crash, and merge when the connection returns (see [Offline](#offline)).
 - **One status.** The top bar shows connection, device and server state in a few words (see [Status](#status)). Leaving the page shows the browser's warning only if an edit is neither on the server nor written to the device.
@@ -24,12 +26,13 @@ pnpm install
 cp .env.example .env.local                                  # Next app
 cp workers/sync/.dev.vars.example workers/sync/.dev.vars    # sync server
 pnpm db:up                                                  # Postgres 17 with docker compose
-pnpm db:migrate                                             # creates the documents table
+pnpm db:migrate                                             # creates the tables
+pnpm keys:sync                                              # sync token keys, into both env files
 pnpm dev:sync                                               # sync server on http://localhost:8787
 pnpm dev                                                    # app on http://localhost:3000 (second terminal)
 ```
 
-Open the same document in two browsers (or a normal and a private window) to see collaboration.
+Sign in with an email address: with `EMAIL_TRANSPORT=console` (the default locally) the sign-in link is printed in the `pnpm dev` terminal. To see collaboration, sign in as two people in two browsers (or a normal and a private window) and share a document from the Share button. Documents created before accounts belong to a placeholder owner; `pnpm db:claim-local --email you@example.com` gives them to your account.
 
 ### Scripts
 
@@ -41,10 +44,13 @@ Open the same document in two browsers (or a normal and a private window) to see
 | `pnpm typecheck` | Route types and `tsc` for the app, Worker types and `tsc` for the sync server |
 | `pnpm lint` | ESLint, plus a check that no file contains an em dash |
 | `pnpm test` | Vitest unit tests (app and protocol package) |
+| `pnpm test:integration` | Server actions, routes and authorization against Postgres, as every role |
 | `pnpm test:sync` | Durable Object tests inside the Workers runtime |
-| `pnpm test:e2e` | Playwright. Starts `wrangler dev` on port 8788 itself, then builds and starts the app on port 3100. Run `pnpm exec playwright install chromium` once first. |
+| `pnpm test:e2e` | Playwright. Starts `wrangler dev` on port 8788 itself, then builds and starts the app on port 3100, and signs people in through real email links (a file outbox). Run `pnpm exec playwright install chromium` once first. Build with `NEXT_PUBLIC_E2E_HOOKS=1` (CI does) for the test that plays an outdated bundle. |
 | `pnpm check:bundles` | After `pnpm build`: fails if Yjs is in any server bundle or in more than one client chunk |
 | `pnpm db:generate` / `pnpm db:migrate` | Create and apply migrations |
+| `pnpm keys:sync` | Generate the Ed25519 key pair for sync tokens and write it to `.env.local` and `workers/sync/.dev.vars` |
+| `pnpm db:claim-local --email <address>` | Give documents created before accounts to that account |
 
 The end-to-end tests create documents in whatever database `DATABASE_URL` points at, so use the local container for them.
 
@@ -57,8 +63,16 @@ Next app ([.env.example](.env.example)):
 | `DATABASE_URL` | Locally, the container URL. On Neon, the **pooled** connection string (host contains `-pooler`). |
 | `DATABASE_URL_UNPOOLED` | Used by `drizzle-kit` only. On Neon, the **direct** connection string. |
 | `NEXT_PUBLIC_SYNC_URL` | WebSocket base URL of the sync server, for example `ws://localhost:8787`. Read at build time. |
-| `SYNC_INTERNAL_URL` | HTTP base URL of the sync server, for rename and delete from the sidebar. |
+| `SYNC_INTERNAL_URL` | HTTP base URL of the sync server, for rename, delete and access changes. |
 | `SYNC_INTERNAL_SECRET` | Shared secret for those calls. Must match the Worker's. |
+| `BETTER_AUTH_SECRET` | 32 or more random bytes; signs sessions and share links. |
+| `BETTER_AUTH_URL` | The app's public URL. Auth cookies, redirects and allowed origins follow it. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional locally. Redirect URI: `<BETTER_AUTH_URL>/api/auth/callback/google`. |
+| `EMAIL_TRANSPORT` | `resend` in production; `console` (print links) or `file` (test outbox) only on localhost. |
+| `RESEND_API_KEY`, `EMAIL_FROM` | For `resend`. |
+| `SYNC_TOKEN_PRIVATE_KEY` | Ed25519 private key (JWK with `kid`) that signs sync tokens. `pnpm keys:sync` creates it. |
+| `AUTH_CLIENT_IP_HEADER`, `AUTH_TRUSTED_PROXIES` | Only behind a proxy that overwrites the header with the real address. See [Rate limits](#rate-limits). |
+| `MAGIC_LINK_DAILY_LIMIT` | Sign-in links per day, site wide. Default 80, under Resend's free plan. |
 
 Sync server ([workers/sync/.dev.vars.example](workers/sync/.dev.vars.example); Worker secrets in production):
 
@@ -66,9 +80,11 @@ Sync server ([workers/sync/.dev.vars.example](workers/sync/.dev.vars.example); W
 | --- | --- |
 | `DATABASE_URL` | Postgres for loading and snapshotting documents. On Neon, the **pooled** string. |
 | `SYNC_INTERNAL_SECRET` | Same value as the app's. |
+| `SYNC_TOKEN_PUBLIC_KEYS` | JWKS with the public key(s) that verify sync tokens. Several keys allow rotation. |
 | `ALLOWED_ORIGINS` | In `wrangler.jsonc`: browser origins allowed to open a socket. |
+| `SCHEMA_VERSION_MIN`, `SCHEMA_VERSION_MAX` | In `wrangler.jsonc`: document schema versions this deployment accepts (see [Changing the document schema](#changing-the-document-schema)). |
 
-There is no deployment. Phase 2 still has no authentication, so it runs only locally and in CI.
+There is no public deployment yet. Phase 4 adds what one needs: accounts, permissions enforced on both servers, and the protections in the [threat model](#threat-model).
 
 ## Architecture
 
@@ -81,20 +97,21 @@ flowchart LR
   end
 
   subgraph Next["Next.js server"]
-    Pages["Pages and server actions<br/>(no Yjs on the server)"]
+    Pages["Pages, server actions, auth<br/>(no Yjs on the server)"]
   end
 
   subgraph Cloudflare["Sync server (Cloudflare Worker)"]
-    Router["Router<br/>validates id and origin"]
-    Room["DocumentRoom<br/>one Durable Object per document<br/>live Y.Doc + SQLite storage"]
+    Router["Router<br/>validates id, origin and sync token"]
+    Room["DocumentRoom<br/>one Durable Object per document<br/>live Y.Doc + SQLite storage<br/>enforces roles per socket"]
     Router --> Room
   end
 
-  PG[("Postgres<br/>documents: yjs_state, title")]
+  PG[("Postgres<br/>documents, members, users, sessions")]
 
-  Provider <-->|"WebSocket: sync, awareness, ack"| Router
-  Pages -->|"list, create, read snapshot"| PG
-  Pages -->|"rename, delete<br/>(shared secret)"| Router
+  Provider -->|"POST sync-token<br/>(session cookie)"| Pages
+  Provider <-->|"WebSocket: token in subprotocol;<br/>sync, awareness, ack, role"| Router
+  Pages -->|"list, create, read snapshot,<br/>sharing, sessions"| PG
+  Pages -->|"rename, delete, access changes<br/>(shared secret)"| Router
   Room -->|"first load; snapshots<br/>(pg over TCP)"| PG
 ```
 
@@ -127,8 +144,28 @@ Every WebSocket message is binary and starts with a varUint type. Framing follow
 | `1` | Awareness | both | Presence states (name, color, cursor). The server relays them and removes a client's states when its socket closes. |
 | `3` | Query awareness | server to client | After waking from hibernation the server has no presence; it asks clients to resend. |
 | `4` | Ack | server to client | Cumulative count of document messages (Step 2 and Update) from this connection that are now durable. Brahma-specific. |
+| `5` | Auth | client to server | A fresh sync token for the same user and document, sent before the current one expires. Brahma-specific. |
+| `6` | Role | server to client | The user's role on this document changed (or a stale token was capped). Brahma-specific. |
 
-An invalid document id or a disallowed browser origin is rejected with HTTP 400 or 403 before the upgrade, so no Durable Object is created. Close codes: `4404` document not found, `4410` document deleted, `1007` malformed message, `1009` message over 4 MiB. Only the offending socket closes; the room carries on.
+The upgrade carries `Sec-WebSocket-Protocol: brahma.v1, schema.<n>, auth.<token>`; the server selects only `brahma.v1`, so the token is never echoed. An invalid document id, a disallowed browser origin, or a missing or invalid token is rejected with HTTP 400, 403 or 401 before the upgrade, so no Durable Object is created.
+
+Close codes, and what the client does with each ([close-policy.ts](src/lib/collab/close-policy.ts), one table, unit tested per code):
+
+| Code | Meaning | Client |
+| --- | --- | --- |
+| `4401` | Token expired or invalid | Fetches a new token and reconnects once; a second `4401` before syncing shows "session ended" |
+| `4403` | Access removed | Stops; "You no longer have access to this document." |
+| `4405` | A viewer sent a write | Downgrade handling, rebuilds the local copy as a viewer, reconnects; a viewer that gets `4405` halts |
+| `4404`, `4400` | Not found, invalid id | Stops; not found |
+| `4410` | Deleted | Stops; deleted handling |
+| `4426` | Bundle older than the document's schema | Updates and reloads ("Brahma was updated. Reloading.") |
+| `4427` | Bundle newer than the deployment accepts | Halts |
+| `1007`, `1009` | Malformed, or over 4 MiB | One retry sending queued edits one per message, then halts |
+| `1008` | Presence that does not match the signed-in user | Halts |
+| other `4xxx` | Unknown application code | Halts |
+| anything else | Network, restart | Reconnects with backoff |
+
+Only the offending socket closes; the room carries on.
 
 ```mermaid
 sequenceDiagram
@@ -195,7 +232,7 @@ Typical transitions: from Saved, the network drops and the label becomes Saved o
 
 - about 2 seconds after the last write, but no later than 10 seconds after the oldest edit not yet in Postgres;
 - immediately when the last client disconnects;
-- immediately after a rename from the sidebar, so the list is current.
+- before a rename from the sidebar answers, so a reload right after it lists the new title.
 
 The title in the column is cleaned the same way Phase 1 validated it. If the write fails, the alarm throws and the runtime retries it with backoff; the edits stay marked dirty. If the row is gone (deleted elsewhere), the room deletes itself. Because each room is the only writer of its row, no row lock or transaction is needed.
 
@@ -219,8 +256,8 @@ Snapshots, compaction and the dirty marker add a handful of rows per alarm. That
 
 **Where data lives on the device.** Two places, both per browser profile and per origin:
 
-- **IndexedDB, database `brahma`** ([src/lib/collab/local-store.ts](src/lib/collab/local-store.ts)): a compacted Yjs snapshot per document, the updates the server already has, the pending queue of local edits it has not acknowledged, and per-document metadata (title, synced on this device, pending count, halted). Edit writes use `durability: "strict"`, so a completed write survives a browser or operating system crash. Brahma uses its own store instead of y-indexeddb because the pending queue, per-write confirmation and metadata are the point, and one database avoids two sources of truth.
-- **The service worker's caches** ([sw/sw.template.js](sw/sw.template.js)): the hashed app files, the pages of documents opened on this device, and an offline page.
+- **IndexedDB, one database per user, `brahma:<userId>`** ([src/lib/collab/local-store.ts](src/lib/collab/local-store.ts)): a compacted Yjs snapshot per document, the updates the server already has, the pending queue of local edits it has not acknowledged, and per-document metadata (title, synced on this device, pending count, halted). Edit writes use `durability: "strict"`, so a completed write survives a browser or operating system crash. Brahma uses its own store instead of y-indexeddb because the pending queue, per-write confirmation and metadata are the point, and one database avoids two sources of truth.
+- **The service worker's caches** ([sw/sw.template.js](sw/sw.template.js)): the hashed app files, and per user (`brahma-pages:<build>:<userId>`) the pages of documents opened on this device and an offline page. Pages carry the user's name and document list, so they are never shared between users.
 
 **Load and sync order.** Opening a document applies, in order, what this device has (snapshot, acknowledged updates, pending edits), then the server snapshot embedded in the page (harmless if older), and renders. Then it connects: handshake, flush the pending queue (one tab per document, under a Web Lock), verify convergence by comparing state vectors, and only then send live edits. Each local edit is written to the device and, when connected, sent at once; the server's ack moves it from pending to acknowledged in one transaction. Tabs of the same document share edits through a `BroadcastChannel`, online or not.
 
@@ -234,7 +271,139 @@ Snapshots, compaction and the dirty marker add a handful of rows per alarm. That
 
 **Storage limits.** Data is best-effort unless persistent: Brahma calls `navigator.storage.persist()` on the first local edit. Chromium browsers allow an origin up to 60% of the disk; Firefox's best-effort limit is the smaller of 10% of the disk or 10 GiB; Safari's limits depend on the app, and it may proactively evict data of sites that have not been used for a while ([MDN: storage quotas and eviction](https://developer.mozilla.org/en-US/docs/Web/API/Storage_API/Storage_quotas_and_eviction_criteria)). When a write fails for lack of space, Brahma says "This device is out of storage for Brahma. Your edits still sync while you're online." and keeps those edits in memory until the server acknowledges them, with the leave warning on.
 
-**Shared computers (Phase 4).** Everything above stays on the device after the tab closes. When accounts arrive, signing out must delete the `brahma` IndexedDB database **and** the service worker's caches (they hold document pages), and clear the guest cookies, so the next person on the same computer sees nothing.
+**Shared computers.** Everything above stays on the device after the tab closes, per user. Signing out deletes it, and the next person to sign in on the device deletes anyone else's (see [Data on the device](#data-on-the-device)).
+
+## Auth and permissions
+
+### Accounts
+
+[Better Auth](src/server/auth.ts) handles sign-in with Google and with email links (Resend in production; a link works once and expires in 10 minutes). Sessions last 30 days, in an HttpOnly, SameSite=Lax cookie that is Secure whenever the app's URL is https. Every page except sign-in requires a session ([proxy](src/proxy.ts), then a check in the layout). On the first sign-in with a verified email, pending invites for that address become memberships. Emails are trimmed and lowercased wherever they are compared.
+
+### Roles
+
+| | Owner | Editor | Viewer |
+| --- | --- | --- | --- |
+| Open, read, see live edits and presence | yes | yes | yes |
+| Edit the body | yes | yes | no |
+| Rename (title) | yes | yes | no |
+| Delete | yes | no | no |
+| Invite, manage the share link, change or remove access | yes | no | no |
+
+One pure function holds this table ([permissions.ts](src/lib/permissions.ts)); the server uses it for every action and route, the interface uses it to hide what you cannot do, and the sync server enforces the editing rows again.
+
+**Sharing.** An invite to an existing account adds them at once; any other address gets a pending invite. A share link carries an HMAC of the document id and a link version under a key derived from `BETTER_AUTH_SECRET`, so the owner can copy it any time without it being stored, and turning the link off and on again issues a new one. Opening a link requires signing in and grants the link's role, but never lowers a role someone already has. An explicit invite turns a link membership into an invite membership, so turning the link off removes only the people who joined through it. If an invite email cannot be sent, the invite still stands and the share dialog says so, with the document link to send by hand.
+
+### Sync tokens
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant N as Next app
+  participant W as Worker router
+  participant R as DocumentRoom
+
+  B->>N: POST /api/documents/:id/sync-token (session cookie, same origin)
+  N->>N: session, role, access version, rate limit
+  N-->>B: Ed25519 token (10 min): user, document, role, access version, name, avatar
+  B->>W: WebSocket upgrade, Sec-WebSocket-Protocol: brahma.v1, schema.n, auth.token
+  W->>W: verify signature, issuer, audience, expiry, document
+  W->>R: forward with the verified identity (client identity headers stripped)
+  R->>R: cap the role by the room's access record for this user
+  R-->>B: 101, protocol brahma.v1 (the token is never echoed)
+  Note over B,R: At 70% of the lifetime the client fetches a new token and sends it in band (type 5)
+```
+
+The token travels in the subprotocol header, so it stays out of URLs and logs. The room keeps the user, role, name, avatar and expiry in each socket's attachment, which survives hibernation. A socket whose token has expired (plus 60 s grace) is closed with `4401` on its next message; the client fetches a new token and reconnects. If the session itself has ended, the token request answers 401 and the editor says "You were signed out, so this document stopped syncing. Your edits are kept on this device." with a Sign in button.
+
+**Live access changes.** Every change to someone's access (invite, role change, removal, link turned off) increments their access version in Postgres. After the response, the app posts the change to `POST /internal/documents/:id/access` (Next `after()`, three attempts, network errors, 429 and 5xx retried). The room records the newest version per user, sends a role message to that user's open sockets or closes them with `4403`, and from then on caps or refuses any token with an older version. Versions, not clocks, decide what is stale, so the app's and the room's clocks never need to agree. Two changes delivered out of order end in the newer one. If every attempt fails, an open socket keeps its old role until its next token refresh (at 70% of the lifetime) or until the token expires: **at most one token lifetime plus the grace period, about 11 minutes**.
+
+### Where each permission is enforced
+
+| Check | Where |
+| --- | --- |
+| Signed in | Proxy (cookie present), then every page, action and route (session) |
+| Can open, rename, delete, share | Every server action and route, through one guard ([guards.ts](src/server/guards.ts)); no access answers the same as a missing document |
+| Can receive a sync token, and with which role | The token route |
+| Token valid for this document | The Worker router, before any Durable Object exists |
+| Role on each socket, live | The DocumentRoom: viewers' writes are dropped and the socket closes with `4405` |
+| Presence is yours | The DocumentRoom: each presence entry must carry the socket's user id and a client id no other socket owns (else `1008`); name and avatar are replaced with the token's |
+| Read-only interface | The editor refuses typing, paste, drop, undo and the floating toolbar for viewers, and a viewer's editor works on a one-way copy of the document, so nothing it does can write. This is convenience; the room is the enforcement. |
+| Internal endpoints | Shared secret, compared in constant time |
+
+Integration tests call every action and route as owner, editor, viewer, a stranger and signed out; Playwright replays a real rename and delete request against a document the user cannot access.
+
+### Offline edits when access changes
+
+- **Removed while offline.** When the device reconnects, the token request finds no access. Queued edits are never sent. The editor is replaced by "You no longer have access to this document." with **Download a copy** (an HTML file of what this device had, queued edits included), and the local copy is deleted.
+- **Made a viewer while offline.** The edits made while offline cannot be accepted. The editor shows "You can now only view this document. Edits you made offline weren't synced. Download a copy to keep them.", keeps that copy for download, deletes the local copy, opens the document again from the server, read-only.
+- **Online.** The same happens immediately, through the role message or `4403`. Another tab of the same user learns about it over a `BroadcastChannel`: less access applies at once, more access is confirmed with the server first.
+
+<a id="data-on-the-device"></a>
+### Data on the device
+
+Each user has their own IndexedDB database and their own page caches, so one person's documents and offline edits are never visible to another.
+
+- **Sign-out** ends the session, deletes the user's database and page caches, and sends their other tabs to sign-in. If the device holds edits that never synced, it asks first, since they would be lost. If the server cannot be reached, the dialog offers **Remove my data from this device**: the data is deleted at once, the page shows only "Your data was removed from this device. You'll be signed out when this device is back online, or when your session expires.", and the sign-out finishes when the device is back online.
+- **Signing in cleans up after anyone else.** Sign-out does not always run (a session expires, a tab closes while offline), so every signed-in page load deletes other users' databases and page caches, the Phase 3 `brahma` database and the old guest cookies, and reloads tabs still showing someone else.
+- **That cleanup runs only after the server confirms the signed-in user**, so it never runs offline. A page can show a user who is no longer signed in: a page served from the offline cache, or a tab left open from before someone else signed in. Cleaning up for that user would delete the signed-in person's data, so the page first asks the server who is signed in, and does nothing unless it is the page's user.
+- **Pruning.** On a confirmed load, local copies of documents the user can no longer open are deleted, unless they hold edits that never synced (opening those shows the removed or deleted handling above).
+
+### CSRF
+
+- **Server actions.** Next compares the `Origin` of every server action request with the host and refuses a mismatch; actions are POST only.
+- **Auth endpoints.** Better Auth refuses requests that carry cookies, and redirect targets, from origins other than `BETTER_AUTH_URL`. Better Auth skips this check when `NODE_ENV` is `test` unless it is set, so [auth.ts](src/server/auth.ts) sets `disableOriginCheck: false` and the integration tests check the real behavior.
+- **The token route.** Requires `Sec-Fetch-Site: same-origin` or an `Origin` equal to the app's.
+- **The sync socket.** The Worker accepts browser connections only from `ALLOWED_ORIGINS`, and needs a token that only a same-origin request can obtain.
+- **Cookies.** SameSite=Lax, so other sites' subresource requests and form posts carry no session.
+
+<a id="rate-limits"></a>
+### Rate limits
+
+| What | Limit | Keyed by |
+| --- | --- | --- |
+| Sign-in links | 5 per hour | email address |
+| Sign-in links | 80 per day (`MAGIC_LINK_DAILY_LIMIT`) | the whole site, under Resend's free plan (100 emails a day) |
+| Auth endpoints | 100 per minute per path, stricter on sign-in paths (Better Auth) | client address, only when a trusted header is configured |
+| Invites | 30 per hour | inviting user |
+| Sync tokens | 600 per hour | user and document, so many tabs and reconnects never lock anyone out |
+
+A client can send any `X-Forwarded-For`, and `next start` keeps it, so no client address header is trusted unless `AUTH_CLIENT_IP_HEADER` names one that a proxy in front of the app overwrites (Vercel: `x-forwarded-for`, Cloudflare: `cf-connecting-ip`; `AUTH_TRUSTED_PROXIES` for proxies that append). Without it, the per-address limits are off and the per-email and site-wide limits apply. If Resend refuses a send for quota reasons, sign-in says "Too many attempts. Try again in a few minutes." and the refusal is logged.
+
+### Document content is untrusted
+
+Any editor can send raw Yjs data that never went through the editor. Links may only point to http, https or mailto, wherever they are rendered, in the editor and in "Download a copy", whose HTML escapes all text and attributes. Content the schema cannot hold (an unknown node or mark) is removed by editors' clients and editing goes on; a viewer's editor works on a one-way copy, so nothing it removes is ever written. Tests send such content from a raw client and check that nothing runs or breaks in other people's browsers.
+
+### Security headers
+
+Every response carries a Content Security Policy with `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'` and `object-src 'none'`; `X-Frame-Options: DENY`; `Referrer-Policy: same-origin` (document and share-link URLs carry ids and tokens); `X-Content-Type-Options: nosniff`; `Cross-Origin-Opener-Policy: same-origin`; a Permissions-Policy that turns off camera, microphone, location and payments; and HSTS when the app's URL is https.
+
+<a id="threat-model"></a>
+### Threat model
+
+**Protected against:**
+
+- **Reading or editing without access.** Every action, route, page and socket checks access; a stranger gets the same answer as for a missing document. Viewers cannot write, whatever their client sends.
+- **Keeping access after it was removed.** Live changes reach open sockets at once; if that delivery fails, at most one token lifetime plus grace (about 11 minutes). Stale tokens are capped by access versions.
+- **Forged or replayed tokens.** Ed25519 signatures with a pinned algorithm, issuer, audience, document and expiry; the router rejects anything else before a room exists. The token is never echoed and never in a URL.
+- **Impersonation in presence.** Presence must carry the socket's user id and its own client ids; names and avatars come from the token.
+- **CSRF and clickjacking.** See [CSRF](#csrf); the app cannot be framed.
+- **Sign-in abuse.** Per-email and site-wide link limits that no header can dodge; per-address limits behind a trusted proxy only. The site-wide cap counts email sign-in only, so Google sign-in keeps working when it is reached.
+- **Hostile document content.** Unsafe link schemes, event handler attributes and unknown node types from a raw client neither run nor break other people's editors or the downloaded copy.
+- **The next person on a shared device.** Per-user storage, deleted on sign-out, and deleted for anyone else on the next confirmed sign-in, also when sign-out never ran. Cleanup runs only for a user the server confirms, so a stale or cached page cannot delete the signed-in person's data.
+- **Stale or rolled-back bundles removing newer content.** Schema versions, bounded by the deployment (see below).
+- **Leaking internal endpoints.** Shared secret, compared in constant time.
+
+**Not protected against, or accepted:**
+
+- **A malicious editor.** Editors can change or delete content, as intended. Version history to undo vandalism is not built.
+- **Unsynced edits of the previous user.** When someone else signs in on a device, the previous user's edits that never synced are deleted without asking, because keeping one person's data away from the next comes first. The previous user is asked only when they sign out themselves.
+- **Sign-out while offline** ends the session on the server only when the device is back online, or when the session expires. "Remove my data from this device" deletes the data at once.
+- **A delivery failure for access changes** leaves up to about 11 minutes of old access on already open sockets (above).
+- **Without a trusted proxy header,** the site-wide link cap is shared by everyone: a flood of sign-in requests can use it up and block email sign-in (not Google) for up to a day. Configure `AUTH_CLIENT_IP_HEADER` in production.
+- **Script injection defenses beyond output encoding.** There is no `script-src` policy yet: Next's inline scripts need per-request nonces, which also changes how pages are cached for offline use.
+- **Share links** can be opened from any site's link: the link is the capability, and sign-in is required. Turning it off revokes it.
+- **A compromised device, browser extension or email account,** and anyone with access to the servers or the database. Documents are not end-to-end encrypted; the app server and the sync server can read them.
+- **Denial of service** against the app or the sync server beyond the rate limits above.
 
 ## Changing the document schema
 
@@ -291,7 +460,21 @@ documents
 
 **Why the title is both shared and a column.** Inside the document it is a `Y.Text`, so it syncs live and merges like the body. The sidebar needs titles for every document without loading Yjs, so snapshots copy it into the column. A Phase 1 document's title exists only in the column; its room seeds the `Y.Text` from it on first load.
 
-**Ownership and workspaces.** `owner_id` and `workspace_id` arrive with authentication in Phase 4 as nullable columns, an additive migration.
+**Ownership and access (Phase 4).**
+
+```
+documents.owner_id     text, not null, references user      every document has one owner
+document_members       (document_id, user_id) primary key
+  role                 editor | viewer | none                "none" after removal; rows are never deleted
+  source               invite | link                         how they got access
+  access_version       integer                               +1 on every change; carried in sync tokens
+document_invites       (document_id, email) unique           pending invites for addresses with no account yet
+share_links            document_id, enabled, role, version   the link token is derived, never stored
+user, session, account, verification, rate_limit             Better Auth
+app_rate_limits        key, window_start, count              limits Better Auth does not cover
+```
+
+The owner migration added `owner_id` as nullable, gave existing documents a placeholder owner, then made it required. A removed member keeps a row with role `none`, so their access version keeps counting up and an old token can never be mistaken for current access.
 
 ## Design system
 
@@ -348,6 +531,15 @@ Light turmeric is `#B87D10` rather than `#C98A12`, because the original measured
 
 Radius follows hierarchy: none on the canvas, 4 px on inline code, 6 px on inputs and buttons, 8 px on menus and the toolbar, 10 px on dialogs. Hairline borders separate surfaces. Shadows appear only on floating layers.
 
+## Next
+
+Agreed out of scope for Phase 4:
+
+- **Transferring ownership** to another member.
+- **A full script Content Security Policy** with per-request nonces.
+- **Restoring deleted documents** (tombstones are kept, so this is possible later).
+- **Audit logs** of who changed access, and when.
+
 ## Project layout
 
 ```
@@ -357,11 +549,13 @@ src/
   components/editor/   editor, floating toolbar, shared title, presence, sync status
   db/                  Drizzle schema and client
   lib/                 validation and helpers
-  lib/collab/          client-only: SyncProvider, device store, status, tabs, presence (unit tested)
-  server/              database access and the sync server's internal API
+  lib/collab/          client-only: SyncProvider, close policy, device store, status, tabs, presence (unit tested)
+  lib/permissions.ts   the role matrix
+  server/              auth, guards, sharing, sync tokens, rate limits, the sync server's internal API
 packages/protocol/     wire format, limits, presence rules shared by client and server
 sw/                    service worker template (built into public/sw.js)
 workers/sync/          Cloudflare Worker: router, DocumentRoom Durable Object, Postgres store
-e2e/                   Playwright tests, including two-browser collaboration
+test/integration/      server actions, routes and authorization against Postgres
+e2e/                   Playwright tests: signed-in people in separate browsers, offline, permissions
 drizzle/               SQL migrations
 ```

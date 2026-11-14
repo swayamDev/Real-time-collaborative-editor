@@ -32,6 +32,22 @@ const eslintConfig = defineConfig([
     ],
     rules: { "no-restricted-imports": ["error", CLIENT_ONLY_MODULES] },
   },
+  {
+    // page.waitForFunction does not await a returned Promise: an async
+    // predicate is truthy at once, so the wait silently passes.
+    files: ["e2e/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.property.name='waitForFunction'] > :matches(ArrowFunctionExpression, FunctionExpression)[async=true]",
+          message:
+            "waitForFunction does not await an async predicate (the Promise is truthy, so it passes at once). Use expect.poll(() => page.evaluate(async () => ...)).",
+        },
+      ],
+    },
+  },
   globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", "workers/*/.wrangler/**", "workers/*/worker-configuration.d.ts"]),
 ]);
 
