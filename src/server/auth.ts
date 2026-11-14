@@ -9,7 +9,7 @@ import * as authSchema from "@/db/auth-schema";
 import { normalizeEmail } from "@/lib/email-address";
 import { eq } from "drizzle-orm";
 import { clientIpOptions } from "./client-ip";
-import { sendEmail } from "./email";
+import { EmailQuotaError, sendEmail } from "./email";
 import { allow } from "./rate-limit";
 import { claimInvites } from "./sharing";
 import { scheduleAccessChanges } from "./sync";
@@ -72,11 +72,20 @@ export const auth = betterAuth({
         if (!(await allow("magicLinkPerEmail", to)) || !(await allow("magicLinkSiteWide", "all"))) {
           throw new APIError("TOO_MANY_REQUESTS", { message: "Too many sign-in links. Try again later." });
         }
-        await sendEmail({
-          to,
-          subject: "Your Brahma sign-in link",
-          text: `Open this link to sign in to Brahma. It works once and expires in 10 minutes.\n\n${url}\n\nIf you did not ask for it, you can ignore this email.`,
-        });
+        try {
+          await sendEmail({
+            to,
+            subject: "Your Brahma sign-in link",
+            text: `Open this link to sign in to Brahma. It works once and expires in 10 minutes.\n\n${url}\n\nIf you did not ask for it, you can ignore this email.`,
+          });
+        } catch (error) {
+          // The provider's quota: the same answer as the app's own limits
+          // (already logged by the email module).
+          if (error instanceof EmailQuotaError) {
+            throw new APIError("TOO_MANY_REQUESTS", { message: "Too many sign-in links. Try again later." });
+          }
+          throw error;
+        }
       },
     }),
     // Lets server actions set auth cookies.

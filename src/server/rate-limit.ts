@@ -14,12 +14,14 @@ export const LIMITS = {
   /** Per email address, on top of Better Auth's per-IP limit, so one inbox cannot be flooded. */
   magicLinkPerEmail: { max: 5, windowSeconds: 60 * 60 },
   /**
-   * Every sign-in link sent, site wide: a ceiling on email sending that no
-   * header can dodge. Raise it with traffic; the per-address limit behind a
-   * trusted proxy (client-ip.ts) is the finer control. MAGIC_LINK_HOURLY_LIMIT
-   * overrides it.
+   * Every sign-in link sent, site wide, per day: a ceiling on email sending
+   * that no header can dodge, set below the email provider's quota so the
+   * app's own limit is reached first. Resend's free plan allows 100 emails a
+   * day (about 3,000 a month); 80 leaves room for invite emails, which share
+   * that quota. MAGIC_LINK_DAILY_LIMIT overrides it on a larger plan. Only
+   * email sign-in counts; Google sign-in sends no email.
    */
-  magicLinkSiteWide: { max: Number(process.env.MAGIC_LINK_HOURLY_LIMIT) || 300, windowSeconds: 60 * 60 },
+  magicLinkSiteWide: { max: Number(process.env.MAGIC_LINK_DAILY_LIMIT) || 80, windowSeconds: 24 * 60 * 60 },
   /** Per user and document: several tabs with reconnects stay well under it. */
   syncToken: { max: 600, windowSeconds: 60 * 60 },
 } satisfies Record<string, Limit>;

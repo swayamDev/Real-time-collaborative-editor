@@ -49,7 +49,7 @@ export default defineConfig({
       // no header unless a proxy that sets it is configured.
       AUTH_CLIENT_IP_HEADER: "x-forwarded-for",
       // Many sign-ins per run; the site-wide ceiling is for real traffic.
-      MAGIC_LINK_HOURLY_LIMIT: "100000",
+      MAGIC_LINK_DAILY_LIMIT: "100000",
     },
   },
 });
