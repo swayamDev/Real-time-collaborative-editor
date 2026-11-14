@@ -10,7 +10,9 @@ import {
   removeMemberAction,
   revokeInviteAction,
   setShareLinkAction,
+  type UndeliveredInvite,
 } from "@/app/share-actions";
+import { INVITE_EMAIL_FAILED } from "@/lib/copy";
 import type { SharingState } from "@/server/sharing";
 import { AccountAvatar } from "./account-menu";
 import { IconButton, iconProps } from "./icon-button";
@@ -75,6 +77,9 @@ function ShareDialog({ documentId, title, onClose }: { documentId: string; title
   const [state, setState] = useState<SharingState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The last invite was saved, but its email could not be sent.
+  const [undelivered, setUndelivered] = useState<UndeliveredInvite | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [email, setEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<MemberRole>("editor");
   const [pending, startTransition] = useTransition();
@@ -88,9 +93,16 @@ function ShareDialog({ documentId, title, onClose }: { documentId: string; title
   }, [documentId]);
 
   const run = useCallback(
-    (action: () => Promise<{ ok: true; value: SharingState } | { ok: false; error: string }>, done?: () => void) => {
+    (
+      action: () => Promise<
+        { ok: true; value: SharingState; undelivered?: UndeliveredInvite } | { ok: false; error: string }
+      >,
+      done?: () => void,
+    ) => {
       setError(null);
       setNotice(null);
+      setUndelivered(null);
+      setLinkCopied(false);
       startTransition(async () => {
         const result = await action();
         if (!result.ok) {
@@ -98,6 +110,7 @@ function ShareDialog({ documentId, title, onClose }: { documentId: string; title
           return;
         }
         setState(result.value);
+        if (result.undelivered) setUndelivered(result.undelivered);
         done?.();
       });
     },
@@ -158,6 +171,26 @@ function ShareDialog({ documentId, title, onClose }: { documentId: string; title
           <p role="alert" className="-mt-2 text-ui-sm text-madder">
             {error}
           </p>
+        )}
+
+        {undelivered && (
+          <div
+            role="status"
+            data-testid="invite-email-failed"
+            data-email={undelivered.email}
+            className="-mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-sm border border-hairline bg-sunken px-3 py-2"
+          >
+            <p className="min-w-0 flex-1 text-ui-sm text-ink">{INVITE_EMAIL_FAILED}</p>
+            <button
+              type="button"
+              data-testid="copy-invite-link"
+              data-url={undelivered.link}
+              onClick={() => void navigator.clipboard?.writeText(undelivered.link).then(() => setLinkCopied(true))}
+              className="h-7 shrink-0 rounded-sm border border-hairline-strong bg-raised px-2.5 text-ui-sm font-medium text-ink transition-colors duration-100 hover:bg-hover"
+            >
+              {linkCopied ? "Copied" : "Copy link"}
+            </button>
+          </div>
         )}
 
         {state && (

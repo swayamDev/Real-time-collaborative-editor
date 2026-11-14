@@ -13,7 +13,8 @@ export interface Email {
  * How email leaves the app, chosen by EMAIL_TRANSPORT:
  *   resend   production (RESEND_API_KEY, EMAIL_FROM)
  *   console  local development: the message is printed
- *   file     CI and end-to-end tests: appended to test-results/outbox/<email>.txt
+ *   file     CI and end-to-end tests: appended to test-results/outbox/<email>.txt;
+ *            addresses at undeliverable.test fail, to test failed sends
  *
  * console and file are refused unless BETTER_AUTH_URL points at localhost,
  * so a deployment can never quietly log sign-in links.
@@ -79,6 +80,9 @@ export async function sendEmail(email: Email): Promise<void> {
     return;
   }
   if (transport === "file") {
+    // Test transport only (localhost): a reserved domain that never delivers,
+    // so tests can see how a failed send is handled.
+    if (email.to.endsWith("@undeliverable.test")) throw new Error("Simulated delivery failure");
     await mkdir(OUTBOX_DIR, { recursive: true });
     await appendFile(join(OUTBOX_DIR, `${email.to.toLowerCase()}.txt`), `${email.subject}\n${email.text}\n---\n`);
     return;

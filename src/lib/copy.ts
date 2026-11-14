@@ -12,6 +12,7 @@ export const ACCESS_DOWNGRADED =
   "You can now only view this document. Edits you made offline weren't synced. Download a copy to keep them.";
 export const SESSION_ENDED = "You were signed out, so this document stopped syncing. Your edits are kept on this device.";
 export const VIEW_ONLY = "View only";
+export const INVITE_EMAIL_FAILED = "Invite saved, but the email couldn't be sent. Send them the document link directly.";
 export const SIGN_OUT_UNSYNCED =
   "Some edits on this device haven't synced yet. Signing out deletes them from this device.";
 export const SIGN_OUT_FAILED =

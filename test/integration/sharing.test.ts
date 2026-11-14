@@ -13,7 +13,12 @@ vi.mock("@/server/session", async () => (await import("./mocks")).sessionModule(
 vi.mock("next/cache", async () => (await import("./mocks")).cacheModule());
 vi.mock("next/navigation", async () => (await import("./mocks")).navigationModule());
 vi.mock("@/server/sync", async () => (await import("./mocks")).syncModule());
-vi.mock("@/server/email", () => ({ sendEmail: async () => {} }));
+const mail = vi.hoisted(() => ({ fail: false }));
+vi.mock("@/server/email", () => ({
+  sendEmail: async () => {
+    if (mail.fail) throw new Error("Simulated delivery failure");
+  },
+}));
 
 const { changeRoleAction, getSharingAction, inviteAction, removeMemberAction, setShareLinkAction } = await import(
   "@/app/share-actions"
@@ -100,6 +105,28 @@ describe("telling the sync server", () => {
 });
 
 describe("invites", () => {
+  it("tells the owner when the invite email could not be sent, with the link to send by hand", async () => {
+    as(world.owner);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const email = `unsent-${Date.now()}@example.test`;
+    mail.fail = true;
+    try {
+      const result = await inviteAction(world.documentId, ` ${email.toUpperCase()} `, "viewer");
+      expect(result).toMatchObject({
+        ok: true,
+        undelivered: { email, link: expect.stringMatching(new RegExp(`/d/${world.documentId}$`)) },
+      });
+      // The invite still stands.
+      if (result.ok) expect(result.value.invites.map((invite) => invite.email)).toContain(email);
+    } finally {
+      mail.fail = false;
+      vi.restoreAllMocks();
+    }
+    const delivered = await inviteAction(world.documentId, `sent-${Date.now()}@example.test`, "viewer");
+    expect(delivered).toMatchObject({ ok: true });
+    expect(delivered).not.toHaveProperty("undelivered");
+  });
+
   it("adds an existing account at once, matching email case and spaces", async () => {
     const bob = await makeUser("bob");
     as(world.owner);

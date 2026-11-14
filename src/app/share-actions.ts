@@ -1,6 +1,7 @@
 "use server";
 
 import type { MemberRole } from "@/db/schema";
+import { normalizeEmail } from "@/lib/email-address";
 import { isDocumentId } from "@/lib/ids";
 import { RATE_LIMITED } from "@/lib/copy";
 import { guardDocument } from "@/server/guards";
@@ -33,7 +34,17 @@ export async function getSharingAction(documentId: unknown): Promise<Result<Shar
   return { ok: true, value: await getSharing(documentId as string) };
 }
 
-export async function inviteAction(documentId: unknown, email: unknown, role: unknown): Promise<Result<SharingState>> {
+/** Set when the invite was saved but its email could not be sent. */
+export interface UndeliveredInvite {
+  email: string;
+  link: string;
+}
+
+export async function inviteAction(
+  documentId: unknown,
+  email: unknown,
+  role: unknown,
+): Promise<Result<SharingState> & { undelivered?: UndeliveredInvite }> {
   const guard = await guardDocument(documentId, "share");
   if (!guard.ok) return guard;
   const parsedRole = parseRole(role);
@@ -43,7 +54,11 @@ export async function inviteAction(documentId: unknown, email: unknown, role: un
   const result = await inviteByEmail(documentId as string, guard.value.user, email, parsedRole);
   if (!result.ok) return result;
   if (result.change) scheduleAccessChanges(documentId as string, [result.change]);
-  return { ok: true, value: await getSharing(documentId as string) };
+  const value = await getSharing(documentId as string);
+  if (!result.emailSent) {
+    return { ok: true, value, undelivered: { email: normalizeEmail(email), link: result.link } };
+  }
+  return { ok: true, value };
 }
 
 export async function changeRoleAction(documentId: unknown, userId: unknown, role: unknown): Promise<Result<SharingState>> {

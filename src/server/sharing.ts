@@ -140,7 +140,15 @@ export async function getSharing(documentId: string): Promise<SharingState> {
 // Invites
 
 export type InviteResult =
-  | { ok: true; kind: "member" | "invited"; change: AccessChange | null }
+  | {
+      ok: true;
+      kind: "member" | "invited";
+      change: AccessChange | null;
+      /** False when the invite email could not be sent; the invite still stands. */
+      emailSent: boolean;
+      /** The document's address, for the owner to send by hand. */
+      link: string;
+    }
   | { ok: false; error: string };
 
 /**
@@ -177,14 +185,21 @@ export async function inviteByEmail(
   const title = await documentTitle(documentId);
   const inviterName = inviter.name || inviter.email;
   const path = `/d/${documentId}`;
-  await sendEmail({
+  const link = appUrl(path);
+  const emailSent = await sendEmail({
     to: email,
     subject: `${inviterName} shared "${title}" with you`,
     text: `${inviterName} invited you to ${role === "editor" ? "edit" : "view"} "${title}" in Brahma.\n\n${appUrl(
       outcome.kind === "member" ? path : `/sign-in?next=${encodeURIComponent(path)}`,
     )}\n`,
-  }).catch((error: unknown) => console.error("Invite email failed", error));
-  return { ok: true, kind: outcome.kind, change: outcome.change };
+  }).then(
+    () => true,
+    (error: unknown) => {
+      console.error("Invite email failed", error);
+      return false;
+    },
+  );
+  return { ok: true, kind: outcome.kind, change: outcome.change, emailSent, link };
 }
 
 export async function revokeInvite(documentId: string, inviteId: string): Promise<void> {
