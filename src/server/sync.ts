@@ -55,3 +55,19 @@ export async function renameInSync(documentId: string, title: string): Promise<s
 export async function deleteInSync(documentId: string): Promise<void> {
   await call(documentId, { method: "DELETE" });
 }
+
+/** A change to one person's access, as the sync server applies it. */
+export interface SyncAccessChange {
+  userId: string;
+  role: "editor" | "viewer" | null;
+  accessVersion: number;
+}
+
+/**
+ * Tell the sync server about access changes so open sockets are downgraded
+ * or closed at once. Wired to the Worker in a later commit.
+ */
+export async function applyAccessChanges(documentId: string, changes: SyncAccessChange[]): Promise<void> {
+  void documentId;
+  void changes;
+}

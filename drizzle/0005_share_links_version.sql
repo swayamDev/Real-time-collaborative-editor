@@ -1,0 +1,1 @@
+ALTER TABLE "share_links" ADD COLUMN "version" integer DEFAULT 1 NOT NULL;

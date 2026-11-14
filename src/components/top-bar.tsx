@@ -12,9 +12,11 @@ interface TopBarProps {
   titleMuted?: boolean;
   status?: React.ReactNode;
   presence?: React.ReactNode;
+  /** Document actions such as Share. */
+  actions?: React.ReactNode;
 }
 
-export function TopBar({ title, titleMuted, status, presence }: TopBarProps) {
+export function TopBar({ title, titleMuted, status, presence, actions }: TopBarProps) {
   const { sidebarCollapsed, toggleSidebar, openDrawer } = useShell();
 
   return (
@@ -50,6 +52,7 @@ export function TopBar({ title, titleMuted, status, presence }: TopBarProps) {
 
       {status}
       {presence}
+      {actions}
       <ThemeToggle />
       <AccountMenu />
     </header>

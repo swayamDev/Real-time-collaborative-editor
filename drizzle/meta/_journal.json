@@ -29,6 +29,20 @@
       "when": 1794637276434,
       "tag": "0003_owners_and_members",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794637667709,
+      "tag": "0004_share_links_drop_token_hash",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794637669091,
+      "tag": "0005_share_links_version",
+      "breakpoints": true
     }
   ]
 }

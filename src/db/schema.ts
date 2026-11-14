@@ -123,9 +123,10 @@ export const documentInvites = pgTable(
 );
 
 /**
- * One share link per document. Only a SHA-256 hash of the token is stored.
- * Turning the link off rotates nothing until it is turned on again, which
- * issues a new token so old links never work again.
+ * One share link per document. The link's token is not stored: it is an
+ * HMAC of "document id:version" under a server secret, so the owner can copy
+ * the link at any time, a database leak alone reveals no working link, and
+ * turning the link on again bumps the version so old links stop working.
  */
 export const shareLinks = pgTable(
   "share_links",
@@ -133,7 +134,7 @@ export const shareLinks = pgTable(
     documentId: uuid("document_id")
       .primaryKey()
       .references(() => documents.id, { onDelete: "cascade" }),
-    tokenHash: text("token_hash").notNull().unique(),
+    version: integer("version").notNull().default(1),
     role: text("role").$type<MemberRole>().notNull(),
     enabled: boolean("enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -141,3 +142,10 @@ export const shareLinks = pgTable(
   },
   (table) => [check("share_links_role_check", sql`${table.role} IN ('editor', 'viewer')`)],
 );
+
+/** Fixed-window counters for limits Better Auth does not cover (invites, sync tokens, per-email sign-in). */
+export const appRateLimits = pgTable("app_rate_limits", {
+  key: text("key").primaryKey(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  count: integer("count").notNull(),
+});

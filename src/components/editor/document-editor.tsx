@@ -7,10 +7,11 @@ import type * as Y from "yjs";
 import { TITLE_FIELD } from "@brahma/protocol";
 import { downloadFile, documentHtml, exportFileName } from "@/lib/collab/export-html";
 import { STORAGE_FULL, SYNC_HALTED, TOO_LARGE_TO_ADD } from "@/lib/copy";
-import type { Role } from "@/lib/permissions";
+import { type Role, can } from "@/lib/permissions";
 import { displayTitle } from "@/lib/title";
 import { useDocuments } from "../app-shell";
 import { cachePageForOffline } from "../service-worker";
+import { ShareButton } from "../share-dialog";
 import { TopBar } from "../top-bar";
 import { BubbleToolbar } from "./bubble-toolbar";
 import { DocumentBanner } from "./document-banner";
@@ -152,6 +153,7 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, 
         titleMuted={shownTitle.trim() === ""}
         status={<SyncStatus status={status} pending={pending} />}
         presence={session && <PresenceBar awareness={session.awareness} />}
+        actions={can(role, "share") ? <ShareButton documentId={id} title={displayTitle(shownTitle)} /> : null}
       />
       <main id="main" className="flex-1 overflow-y-auto" data-testid="document-scroll">
         {status === "halted" && (

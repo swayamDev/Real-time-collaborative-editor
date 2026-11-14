@@ -6,7 +6,10 @@ import { magicLink } from "better-auth/plugins/magic-link";
 import { db } from "@/db/client";
 import * as authSchema from "@/db/auth-schema";
 import { normalizeEmail } from "@/lib/email-address";
+import { eq } from "drizzle-orm";
 import { sendEmail } from "./email";
+import { claimInvites } from "./sharing";
+import { applyAccessChanges } from "./sync";
 
 const baseURL = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 
@@ -36,6 +39,22 @@ export const auth = betterAuth({
   advanced: {
     // HttpOnly, SameSite=Lax by default; Secure whenever the base URL is https.
     useSecureCookies: baseURL.startsWith("https://"),
+  },
+  databaseHooks: {
+    session: {
+      create: {
+        // Every sign-in applies pending invites for the user's verified email.
+        after: async (session) => {
+          const [account] = await db()
+            .select({ email: authSchema.user.email, verified: authSchema.user.emailVerified })
+            .from(authSchema.user)
+            .where(eq(authSchema.user.id, session.userId));
+          if (!account?.verified) return;
+          const claimed = await claimInvites(session.userId, account.email);
+          for (const { documentId, change } of claimed) await applyAccessChanges(documentId, [change]);
+        },
+      },
+    },
   },
   plugins: [
     magicLink({
