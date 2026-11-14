@@ -38,6 +38,7 @@ import {
   type SyncSession,
   usePendingEdits,
   useRole,
+  useUnsavedChanges,
   useStorageFull,
   useSyncSession,
   useSyncStatus,
@@ -159,6 +160,7 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, 
     remove(id);
   }, [status, clearLocalCopy, remove, id]);
   const pending = usePendingEdits(session);
+  const unwritten = useUnsavedChanges(session);
   const storageFull = useStorageFull(session);
 
   // The shared title is authoritative once this device has synced the
@@ -247,7 +249,7 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, 
                 {VIEW_ONLY}
               </span>
             )}
-            <SyncStatus status={status} pending={pending} />
+            <SyncStatus status={status} pending={pending} unwritten={unwritten} />
           </>
         }
         presence={session && <PresenceBar awareness={session.awareness} />}

@@ -152,6 +152,15 @@ export function usePendingEdits(session: SyncSession | null): boolean {
   );
 }
 
+/** An edit exists that is neither acknowledged by the server nor written on this device. */
+export function useUnsavedChanges(session: SyncSession | null): boolean {
+  return useSyncExternalStore(
+    session ? (listener) => session.provider.subscribe(listener) : noop,
+    () => session?.provider.hasUnsavedChanges ?? false,
+    () => false,
+  );
+}
+
 /** The device ran out of storage; edits are kept in memory until acknowledged. */
 export function useStorageFull(session: SyncSession | null): boolean {
   return useSyncExternalStore(

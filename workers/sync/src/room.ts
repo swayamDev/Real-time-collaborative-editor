@@ -358,8 +358,11 @@ export class DocumentRoom extends DurableObject<Env> {
       text.insert(0, cleaned);
     }, "internal");
     this.flush();
-    // The sidebar list reads the column, so snapshot right away.
-    this.snapshotSoon();
+    // The sidebar list reads the column: save before answering, so a reload
+    // right after a rename shows the new title. If the save fails, the rename
+    // reports failure (the alarm retries the save).
+    this.snapshotUrgent = true;
+    await this.alarm();
     return Response.json({ title: cleaned });
   }
 

@@ -377,19 +377,15 @@ describe("internal API", () => {
     expect((await internal(id, { method: "DELETE", secret: "test-secret-but-longer" })).status).toBe(401);
   });
 
-  it("renames through the shared title so open editors update, then snapshots", async () => {
+  it("renames through the shared title so open editors update, and saves the column before answering", async () => {
     const id = seed("Before");
     const a = await joined(id);
     const response = await internal(`${id}/title`, { method: "POST", body: JSON.stringify({ title: "  After\nrename " }) });
     expect(response.status).toBe(200);
+    // The sidebar list reads the column: it is current as soon as the rename returns.
+    expect(memoryStore.rows.get(id)!.title).toBe("After rename");
     expect(await response.json()).toEqual({ title: "After rename" });
     await a.until(() => a.text("title") === "After rename", "title update reaches the editor");
-
-    const deadline = Date.now() + 1_500;
-    while (memoryStore.rows.get(id)!.title !== "After rename") {
-      if (Date.now() > deadline) throw new Error("Column not updated");
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
   });
 
   it("returns 404 when renaming a document that does not exist", async () => {
