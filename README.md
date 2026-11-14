@@ -257,6 +257,13 @@ When you add a node type, mark type or attribute:
 
    To roll back the app, lower `SCHEMA_VERSION_MAX` again: rooms clamp what they remember, and the rolled-back clients get back in.
 
+Rolling back has a cost: the rolled-back clients remove content their schema cannot hold, so once documents contain the new node type, lowering `MAX` loses that content. So introduce a new node type in two releases:
+
+1. Ship schema support only: the node type is in the schema and renders, but nothing in the UI can create it. Rolling this back is safe, because no document contains the new type yet.
+2. After `SCHEMA_VERSION_MIN` has been raised to that version, ship the UI that creates it. Every client that can connect now understands the type.
+
+Once new content exists, roll forward with a fix instead of rolling back.
+
 The version protects honest clients running an old bundle. A client can claim any version, but a malicious editor could delete content anyway.
 
 ## Why Yjs never loads on the server
