@@ -3,6 +3,7 @@
 import { Menu as MenuIcon, PanelLeft } from "lucide-react";
 import { useShell } from "./app-shell";
 import { IconButton, iconProps } from "./icon-button";
+import { AccountMenu } from "./account-menu";
 import { ThemeToggle } from "./theme-toggle";
 
 interface TopBarProps {
@@ -50,6 +51,7 @@ export function TopBar({ title, titleMuted, status, presence }: TopBarProps) {
       {status}
       {presence}
       <ThemeToggle />
+      <AccountMenu />
     </header>
   );
 }

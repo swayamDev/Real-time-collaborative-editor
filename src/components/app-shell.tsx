@@ -15,7 +15,16 @@ import { SIDEBAR_COOKIE, THEME_COOKIE, type Theme, writePreferenceCookie } from 
 import type { DocumentSummary } from "@/server/documents";
 import { Sidebar } from "./sidebar";
 
+/** The signed-in user, as the client sees it. */
+export interface ShellUser {
+  id: string;
+  name: string;
+  email: string;
+  image: string | null;
+}
+
 interface ShellContextValue {
+  user: ShellUser;
   theme: Theme;
   setTheme: (theme: Theme) => void;
   sidebarCollapsed: boolean;
@@ -57,11 +66,13 @@ function byLastEdited(a: DocumentSummary, b: DocumentSummary): number {
 const DESKTOP_QUERY = "(min-width: 768px)";
 
 export function AppShell({
+  user,
   documents: serverDocuments,
   initialTheme,
   initialSidebarCollapsed,
   children,
 }: {
+  user: ShellUser;
   documents: DocumentSummary[];
   initialTheme: Theme;
   initialSidebarCollapsed: boolean;
@@ -156,8 +167,8 @@ export function AppShell({
   }, [toggleSidebar]);
 
   const shellValue = useMemo(
-    () => ({ theme, setTheme, sidebarCollapsed, toggleSidebar, openDrawer, closeDrawer }),
-    [theme, setTheme, sidebarCollapsed, toggleSidebar, openDrawer, closeDrawer],
+    () => ({ user, theme, setTheme, sidebarCollapsed, toggleSidebar, openDrawer, closeDrawer }),
+    [user, theme, setTheme, sidebarCollapsed, toggleSidebar, openDrawer, closeDrawer],
   );
 
   return (

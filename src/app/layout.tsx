@@ -1,9 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
-import { AppShell } from "@/components/app-shell";
 import { ServiceWorkerRegistration } from "@/components/service-worker";
-import { SIDEBAR_COOKIE, THEME_COOKIE, parseSidebarCollapsed, parseTheme } from "@/lib/preferences";
-import { listDocuments } from "@/server/documents";
+import { THEME_COOKIE, parseTheme } from "@/lib/preferences";
 import { codeFont, documentFont, uiFont } from "./fonts";
 import "./globals.css";
 
@@ -18,10 +16,7 @@ export const viewport: Viewport = {
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  const [cookieStore, documents] = await Promise.all([cookies(), listDocuments()]);
-  const theme = parseTheme(cookieStore.get(THEME_COOKIE)?.value);
-  const sidebarCollapsed = parseSidebarCollapsed(cookieStore.get(SIDEBAR_COOKIE)?.value);
-
+  const theme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
   return (
     <html
       lang="en"
@@ -29,9 +24,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       className={`${uiFont.variable} ${documentFont.variable} ${codeFont.variable}`}
     >
       <body>
-        <AppShell documents={documents} initialTheme={theme} initialSidebarCollapsed={sidebarCollapsed}>
-          {children}
-        </AppShell>
+        {children}
         <ServiceWorkerRegistration />
       </body>
     </html>

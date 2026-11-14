@@ -15,6 +15,13 @@
       "when": 1794601091204,
       "tag": "0001_document_tombstone",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794636895980,
+      "tag": "0002_auth_tables",
+      "breakpoints": true
     }
   ]
 }
