@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { renameDocumentAction } from "@/app/actions";
 import { cn } from "@/lib/cn";
+import { can } from "@/lib/permissions";
 import { RENAME_FAILED } from "@/lib/copy";
 import { TITLE_MAX_LENGTH, displayTitle } from "@/lib/title";
 import type { DocumentSummary } from "@/server/documents";
@@ -30,6 +31,10 @@ export function DocumentRow({ document, active, unsynced, unavailableOffline, on
   const [error, setError] = useState<string | null>(null);
   const label = displayTitle(document.title);
   const untitled = document.title.trim() === "";
+  const menuItems = [
+    ...(can(document.role, "rename") ? [{ label: "Rename", onSelect: () => setRenaming(true) }] : []),
+    ...(can(document.role, "delete") ? [{ label: "Delete", destructive: true, onSelect: onRequestDelete }] : []),
+  ];
 
   const commitRename = async (value: string) => {
     setRenaming(false);
@@ -89,7 +94,9 @@ export function DocumentRow({ document, active, unsynced, unavailableOffline, on
           <Link
             href={`/d/${document.id}`}
             aria-current={active ? "page" : undefined}
-            onDoubleClick={() => setRenaming(true)}
+            onDoubleClick={() => {
+              if (can(document.role, "rename")) setRenaming(true);
+            }}
             className={cn(
               "focus-inset flex h-8 items-center gap-2 rounded-sm px-2 text-ui-sm transition-colors duration-100",
               active ? "bg-indigo-tint font-medium text-ink" : "text-ink hover:bg-hover",
@@ -110,6 +117,7 @@ export function DocumentRow({ document, active, unsynced, unavailableOffline, on
               )}
             />
           </Link>
+          {menuItems.length > 0 && (
           <div
             className={cn(
               "absolute top-0 right-0 flex h-8 items-center pr-0.5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100",
@@ -118,10 +126,7 @@ export function DocumentRow({ document, active, unsynced, unavailableOffline, on
           >
             <Menu
               onOpenChange={setMenuOpen}
-              items={[
-                { label: "Rename", onSelect: () => setRenaming(true) },
-                { label: "Delete", destructive: true, onSelect: onRequestDelete },
-              ]}
+              items={menuItems}
               trigger={(props) => (
                 <button
                   {...props}
@@ -135,6 +140,7 @@ export function DocumentRow({ document, active, unsynced, unavailableOffline, on
               )}
             />
           </div>
+          )}
         </>
       )}
       {error && (

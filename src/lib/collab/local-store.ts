@@ -31,6 +31,8 @@ export interface DocumentMeta {
   pendingCount: number;
   /** Sync stopped because the server refused an edit (kept on the device). */
   halted: boolean;
+  /** The user's role when last seen online; offline lists use it to group documents. */
+  role?: "owner" | "editor" | "viewer";
 }
 
 export interface PendingRow {

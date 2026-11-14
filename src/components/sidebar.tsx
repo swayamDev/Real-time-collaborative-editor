@@ -32,8 +32,17 @@ export function Sidebar({ variant }: { variant: "docked" | "drawer" }) {
         ...[...onDevice.values()]
           .filter((meta) => !documents.some((document) => document.id === meta.id))
           .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
-          .map((meta) => ({ id: meta.id, title: meta.title, updatedAt: new Date(meta.lastOpenedAt).toISOString() })),
+          .map((meta) => ({
+            id: meta.id,
+            title: meta.title,
+            updatedAt: new Date(meta.lastOpenedAt).toISOString(),
+            role: meta.role ?? ("viewer" as const),
+          })),
       ];
+  const sections = [
+    { label: "My documents", documents: listed.filter((document) => document.role === "owner") },
+    { label: "Shared with me", documents: listed.filter((document) => document.role !== "owner") },
+  ];
   const { toggleSidebar, closeDrawer } = useShell();
   const pathname = usePathname();
   const router = useRouter();
@@ -85,25 +94,36 @@ export function Sidebar({ variant }: { variant: "docked" | "drawer" }) {
       </div>
 
       <nav aria-label="Documents" className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-        {listed.length === 0 ? (
-          <p className="px-2 py-1.5 text-ui-sm text-ink-muted">No documents yet.</p>
-        ) : (
-          <ul className="flex flex-col gap-px" data-testid={`document-list-${variant}`}>
-            {listed.map((document) => (
-              <DocumentRow
-                key={document.id}
-                document={document}
-                active={document.id === activeId}
-                unsynced={(onDevice.get(document.id)?.pendingCount ?? 0) > 0}
-                unavailableOffline={!online && !onDevice.has(document.id)}
-                onRequestDelete={() => {
-                  setDeleteError(null);
-                  setToDelete(document);
-                }}
-              />
-            ))}
-          </ul>
-        )}
+        <div data-testid={`document-list-${variant}`}>
+          {sections.map((section) => (
+            <section key={section.label} aria-labelledby={`${variant}-${section.label}`} className="mt-2 first:mt-0">
+              <h2 id={`${variant}-${section.label}`} className="px-2 pt-2 pb-1 text-meta font-medium text-ink-muted">
+                {section.label}
+              </h2>
+              {section.documents.length === 0 ? (
+                <p className="px-2 py-1.5 text-ui-sm text-ink-muted">
+                  {section.label === "My documents" ? "No documents yet." : "Nothing shared with you yet."}
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-px">
+                  {section.documents.map((document) => (
+                    <DocumentRow
+                      key={document.id}
+                      document={document}
+                      active={document.id === activeId}
+                      unsynced={(onDevice.get(document.id)?.pendingCount ?? 0) > 0}
+                      unavailableOffline={!online && !onDevice.has(document.id)}
+                      onRequestDelete={() => {
+                        setDeleteError(null);
+                        setToDelete(document);
+                      }}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+          ))}
+        </div>
       </nav>
 
       <ConfirmDialog

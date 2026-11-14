@@ -1,19 +1,27 @@
 import "server-only";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/db/client";
-import { documents } from "@/db/schema";
+import { documentMembers, documents } from "@/db/schema";
 import { emptyYjsState } from "@/lib/empty-yjs-state";
+import type { Role } from "@/lib/permissions";
 
 /** What the sidebar needs. Dates cross the server/client boundary as ISO strings. */
 export interface DocumentSummary {
   id: string;
   title: string;
   updatedAt: string;
+  /** The current user's role on this document. */
+  role: Role;
 }
 
 export interface DocumentWithState extends DocumentSummary {
   state: Uint8Array;
   deleted: boolean;
+}
+
+export interface DocumentLists {
+  mine: DocumentSummary[];
+  shared: DocumentSummary[];
 }
 
 const summaryColumns = {
@@ -22,37 +30,50 @@ const summaryColumns = {
   updatedAt: documents.updatedAt,
 };
 
-function toSummary(row: { id: string; title: string; updatedAt: Date }): DocumentSummary {
-  return { id: row.id, title: row.title, updatedAt: row.updatedAt.toISOString() };
+function toSummary(row: { id: string; title: string; updatedAt: Date }, role: Role): DocumentSummary {
+  return { id: row.id, title: row.title, updatedAt: row.updatedAt.toISOString(), role };
 }
 
-export async function listDocuments(): Promise<DocumentSummary[]> {
-  const rows = await db()
-    .select(summaryColumns)
-    .from(documents)
-    .where(isNull(documents.deletedAt))
-    .orderBy(desc(documents.updatedAt), desc(documents.id));
-  return rows.map(toSummary);
+/** "My documents" (owned) and "Shared with me" (any live membership), newest edit first. */
+export async function listDocumentsFor(userId: string): Promise<DocumentLists> {
+  const [owned, shared] = await Promise.all([
+    db()
+      .select(summaryColumns)
+      .from(documents)
+      .where(and(eq(documents.ownerId, userId), isNull(documents.deletedAt)))
+      .orderBy(desc(documents.updatedAt), desc(documents.id)),
+    db()
+      .select({ ...summaryColumns, role: documentMembers.role })
+      .from(documentMembers)
+      .innerJoin(documents, eq(documents.id, documentMembers.documentId))
+      .where(and(eq(documentMembers.userId, userId), ne(documentMembers.role, "none"), isNull(documents.deletedAt)))
+      .orderBy(desc(documents.updatedAt), desc(documents.id)),
+  ]);
+  return {
+    mine: owned.map((row) => toSummary(row, "owner")),
+    shared: shared.map((row) => toSummary(row, row.role as Role)),
+  };
 }
 
-export async function getDocument(id: string): Promise<DocumentWithState | null> {
+/** A document with its content, as seen by a user who has `role` on it. */
+export async function getDocument(id: string, role: Role): Promise<DocumentWithState | null> {
   const [row] = await db()
     .select({ ...summaryColumns, state: documents.yjsState, deletedAt: documents.deletedAt })
     .from(documents)
     .where(eq(documents.id, id));
-  return row ? { ...toSummary(row), state: row.state, deleted: row.deletedAt !== null } : null;
+  return row ? { ...toSummary(row, role), state: row.state, deleted: row.deletedAt !== null } : null;
 }
 
 /**
- * A new, empty document. The title only seeds the list; the sync server
- * copies the shared title over it on the first snapshot.
+ * A new, empty document owned by `ownerId`. The title only seeds the list;
+ * the sync server copies the shared title over it on the first snapshot.
  */
-export async function createDocument(title = ""): Promise<DocumentSummary> {
+export async function createDocument(ownerId: string, title = ""): Promise<DocumentSummary> {
   const [row] = await db()
     .insert(documents)
-    .values({ yjsState: emptyYjsState(), title })
+    .values({ yjsState: emptyYjsState(), title, ownerId })
     .returning(summaryColumns);
-  return toSummary(row);
+  return toSummary(row, "owner");
 }
 
 /**

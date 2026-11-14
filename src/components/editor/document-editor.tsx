@@ -7,6 +7,7 @@ import type * as Y from "yjs";
 import { TITLE_FIELD } from "@brahma/protocol";
 import { downloadFile, documentHtml, exportFileName } from "@/lib/collab/export-html";
 import { STORAGE_FULL, SYNC_HALTED, TOO_LARGE_TO_ADD } from "@/lib/copy";
+import type { Role } from "@/lib/permissions";
 import { displayTitle } from "@/lib/title";
 import { useDocuments } from "../app-shell";
 import { cachePageForOffline } from "../service-worker";
@@ -58,6 +59,8 @@ interface DocumentEditorProps {
   initialState: string;
   /** The row is tombstoned. */
   deleted: boolean;
+  /** The current user's role on this document. */
+  role: Role;
 }
 
 export function DocumentEditor(props: DocumentEditorProps) {
@@ -74,14 +77,14 @@ export function DocumentEditor(props: DocumentEditorProps) {
   return <LiveDocumentEditor {...props} />;
 }
 
-function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState }: DocumentEditorProps) {
+function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, role }: DocumentEditorProps) {
   const { setTitle, touch, ensure, remove } = useDocuments();
 
   useEffect(() => {
-    ensure({ id, title: initialTitle, updatedAt: initialUpdatedAt });
+    ensure({ id, title: initialTitle, updatedAt: initialUpdatedAt, role });
     // Keep this page for offline use, even when it was reached by a client-side navigation.
     cachePageForOffline(`/d/${id}`);
-  }, [ensure, id, initialTitle, initialUpdatedAt]);
+  }, [ensure, id, initialTitle, initialUpdatedAt, role]);
 
   // The Y.Doc opens from this device first, then the page's Postgres
   // snapshot, then whatever the sync server sends. Merging is idempotent.

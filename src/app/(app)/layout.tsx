@@ -1,13 +1,15 @@
 import { cookies } from "next/headers";
 import { AppShell } from "@/components/app-shell";
 import { SIDEBAR_COOKIE, THEME_COOKIE, parseSidebarCollapsed, parseTheme } from "@/lib/preferences";
-import { listDocuments } from "@/server/documents";
+import { listDocumentsFor } from "@/server/documents";
 import { requireUserOrRedirect } from "@/server/session";
 
 /** Everything behind sign-in: the shell, the sidebar and the documents. */
 export default async function AppLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const user = await requireUserOrRedirect();
-  const [cookieStore, documents] = await Promise.all([cookies(), listDocuments()]);
+  const [cookieStore, lists] = await Promise.all([cookies(), listDocumentsFor(user.id)]);
+  // One list; the sidebar groups it into "My documents" and "Shared with me" by role.
+  const documents = [...lists.mine, ...lists.shared];
   return (
     <AppShell
       user={user}

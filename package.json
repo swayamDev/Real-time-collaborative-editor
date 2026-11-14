@@ -16,7 +16,8 @@
     "db:migrate": "drizzle-kit migrate",
     "check:bundles": "node scripts/check-bundles.mjs",
     "test:sync": "pnpm --filter @brahma/sync test",
-    "dev:sync": "pnpm --filter @brahma/sync dev"
+    "dev:sync": "pnpm --filter @brahma/sync dev",
+    "db:claim-local": "node scripts/claim-local.mjs"
   },
   "dependencies": {
     "@brahma/protocol": "workspace:*",

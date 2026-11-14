@@ -1,10 +1,13 @@
 import { redirect } from "next/navigation";
 import { NewDocumentButton } from "@/components/new-document-button";
 import { TopBar } from "@/components/top-bar";
-import { listDocuments } from "@/server/documents";
+import { listDocumentsFor } from "@/server/documents";
+import { requireUserOrRedirect } from "@/server/session";
 
 export default async function Home() {
-  const [latest] = await listDocuments();
+  const user = await requireUserOrRedirect();
+  const { mine, shared } = await listDocumentsFor(user.id);
+  const [latest] = [...mine, ...shared].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   if (latest) redirect(`/d/${latest.id}`);
 
   return (
