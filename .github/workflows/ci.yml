@@ -1,9 +1,14 @@
 name: CI
 
+# pull_request (never pull_request_target): runs from forks get no secrets
+# and a read-only token. Nothing here uses the production environment.
 on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}

@@ -1,0 +1,12 @@
+# Never upload local secrets or build output to Vercel (the deploy
+# workflow uploads a clean checkout; this guards manual deploys too).
+.env*
+!.env.example
+workers/*/.dev.vars
+workers/*/.wrangler
+node_modules
+.next
+public/sw.js
+test-results
+playwright-report
+playwright/.cache

@@ -1,0 +1,81 @@
+name: Deploy
+
+# Production deploys only. Runs after CI succeeds for a push to main, or by
+# hand. Never on pull requests: fork pull requests run CI (ci.yml, on
+# pull_request) with no secrets and a read-only token, and this workflow
+# ignores anything that is not a push to main.
+#
+# The single job uses the "production" environment, which (configured in
+# the repository settings) requires a reviewer's approval and accepts only
+# the main branch. App secrets never enter GitHub Actions: Vercel builds the
+# app remotely with the variables it holds. GitHub holds only deploy tokens,
+# the Neon API key, and the database URL that migrations need.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Back up, migrate, deploy the Worker, deploy the app
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Exactly the commit CI tested (by hand: the branch it was started on).
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # 1. A copy-on-write branch of the production database, before anything changes.
+      - name: Back up the database (Neon branch)
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: pnpm exec tsx scripts/neon-backup.ts
+
+      # 2. Additive (expand) migrations only; the running app must keep working.
+      - name: Migrate
+        env:
+          DATABASE_URL_UNPOOLED: ${{ secrets.PROD_DATABASE_URL_UNPOOLED }}
+        run: pnpm db:migrate
+
+      # 3. The sync Worker. Its secrets live in Cloudflare; preflight checks
+      #    the production config and that they are set (names only).
+      - name: Deploy the sync Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          pnpm preflight:worker
+          pnpm --filter @brahma/sync exec wrangler deploy --env production
+
+      # 4. The app, built remotely by Vercel with the variables Vercel holds
+      #    (preflight runs in that build and refuses anything incomplete).
+      - name: Deploy the app (remote build on Vercel)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: pnpm dlx vercel@65.9.0 deploy --prod --yes --archive=tgz --token "$VERCEL_TOKEN"
