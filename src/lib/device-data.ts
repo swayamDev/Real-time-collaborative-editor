@@ -2,7 +2,7 @@
  * What Brahma keeps on a device, per user, and how it is cleaned up.
  *
  *   IndexedDB         brahma:<userId>               documents and offline edits
- *   Cache Storage     brahma-pages:<build>:<userId> pages kept for offline use
+ *   Cache Storage     brahma-pages:<userId>         pages kept for offline use (sw/cache-policy.mjs)
  *   Phase 3 leftovers brahma (database), brahma-pages-<build> (cache),
  *                     brahma-name and brahma-guest (cookies)
  *

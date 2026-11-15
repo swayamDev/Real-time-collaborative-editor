@@ -54,6 +54,10 @@ describe("naming", () => {
     expect(foreignDatabases(["brahma", "brahma:a", "brahma:b", "other-app"], "a")).toEqual(["brahma", "brahma:b"]);
   });
 
+  it("finds other users' page caches in the current naming", () => {
+    expect(foreignPageCaches(["brahma-pages:a", "brahma-pages:b", "brahma-pages:xa"], "a")).toEqual(["brahma-pages:b", "brahma-pages:xa"]);
+  });
+
   it("finds other users' page caches, legacy ones included, never a prefix match", () => {
     const caches = ["brahma-pages:v1:a", "brahma-pages:v1:xa", "brahma-pages-v0", "brahma-static-v1", "brahma-user"];
     expect(foreignPageCaches(caches, "a")).toEqual(["brahma-pages:v1:xa", "brahma-pages-v0"]);

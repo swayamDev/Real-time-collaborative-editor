@@ -2,19 +2,11 @@
 
 const VERSION = "__BUILD_ID__";
 const STATIC_CACHE = `brahma-static-${VERSION}`;
-/**
- * Pages are kept per user: `brahma-pages:<version>:<userId>`. A page holds
- * the signed-in user's name and document list, so one user's copies are
- * never served to another, and signing in as someone else deletes them.
- * The client deletes caches by the same naming (src/lib/device-data.ts).
- */
-const PAGES_PREFIX = `brahma-pages:${VERSION}:`;
-/** Remembers who is signed in on this device, across service worker restarts. */
-const USER_CACHE = "brahma-user";
-const USER_KEY = "/__brahma/user";
-const OFFLINE_URL = "/offline";
 /** Hashed, immutable build output: safe to keep until the next version. */
 const PRECACHE = __PRECACHE__;
+
+// Cache naming and cleanup rules (sw/cache-policy.mjs, unit tested).
+/* __CACHE_POLICY__ */
 
 /** The signed-in user's id, "" when unknown or signed out. */
 let currentUser = null;
@@ -30,25 +22,49 @@ async function getUser() {
 /** This user's page cache, or null when nobody is known to be signed in. */
 async function pageCache() {
   const user = await getUser();
-  return user ? caches.open(PAGES_PREFIX + user) : null;
+  return user ? caches.open(pageCacheName(user)) : null;
 }
 
-/** Delete every page cache except `keepUser`'s ("" deletes them all). */
-async function deletePageCaches(keepUser) {
-  for (const name of await caches.keys()) {
-    if (name.startsWith("brahma-pages") && !(keepUser && name === PAGES_PREFIX + keepUser)) await caches.delete(name);
-  }
+/** Who the server says is signed in right now (the same gate as the client's cleanup). */
+async function confirmUser() {
+  const response = await fetch("/api/auth/get-session", { credentials: "include", cache: "no-store" });
+  if (!response.ok) return null;
+  const body = await response.json();
+  return body && body.user && typeof body.user.id === "string" ? body.user.id : null;
 }
 
+/**
+ * The page tells the worker who is signed in. Pages send this only after
+ * the server has confirmed the user (claimDevice in src/lib/device-data.ts).
+ */
 async function setUser(userId) {
   currentUser = userId;
   const store = await caches.open(USER_CACHE);
   if (userId) await store.put(USER_KEY, new Response(userId));
   else await store.delete(USER_KEY);
-  await deletePageCaches(userId);
+  for (const name of pageCachesToDelete(await caches.keys(), userId)) await caches.delete(name);
   // The offline fallback page carries the user's name, so it is per user too.
   const pages = await pageCache();
   if (pages && !(await pages.match(OFFLINE_URL))) await cachePage(OFFLINE_URL);
+  if (userId && (await store.match(REFRESH_KEY))) await refreshPages(userId);
+}
+
+/** After an update: refresh this user's page copies, then drop earlier versions' files. */
+function refreshPages(userId) {
+  return refreshAfterUpdate(userId, {
+    version: VERSION,
+    confirmUser,
+    listPages: async (user) => {
+      const pages = await caches.open(pageCacheName(user));
+      return (await pages.keys()).map((request) => new URL(request.url).pathname);
+    },
+    fetchPage: (url) => fetch(url, { credentials: "include", cache: "no-store" }),
+    putPage: async (user, url, response) => (await caches.open(pageCacheName(user))).put(url, response),
+    deletePage: async (user, url) => (await caches.open(pageCacheName(user))).delete(url),
+    cacheNames: () => caches.keys(),
+    deleteCache: (name) => caches.delete(name),
+    clearRefreshPending: async () => (await caches.open(USER_CACHE)).delete(REFRESH_KEY),
+  });
 }
 
 self.addEventListener("install", (event) => {
@@ -64,12 +80,12 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      // Older versions' pages reference chunks that no longer exist: drop
-      // every old cache, pages included. They refill as documents are opened.
-      for (const name of await caches.keys()) {
-        const keep = name === STATIC_CACHE || name === USER_CACHE || name.startsWith(PAGES_PREFIX);
-        if (name.startsWith("brahma-") && !keep) await caches.delete(name);
-      }
+      const names = await caches.keys();
+      // Earlier versions' static files stay until page copies are refreshed
+      // for a confirmed user, so tabs and copies from the previous version
+      // keep working through a deploy.
+      if (isUpdate(names, VERSION)) await (await caches.open(USER_CACHE)).put(REFRESH_KEY, new Response(VERSION));
+      for (const name of cachesToDeleteOnActivate(names, VERSION)) await caches.delete(name);
       await self.clients.claim();
     })(),
   );
@@ -97,6 +113,7 @@ function isRscRequest(request, url) {
   return request.headers.get("RSC") === "1" || url.searchParams.has("_rsc");
 }
 
+/** Hashed files from any version still cached (earlier versions stay until refreshed). */
 async function staticFirst(request) {
   const cached = await caches.match(request);
   if (cached) return cached;

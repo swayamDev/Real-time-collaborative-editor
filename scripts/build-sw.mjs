@@ -16,9 +16,14 @@ const precache = files(".next/static")
   .filter((path) => !path.endsWith(".map"))
   .map((path) => `/_next/static/${relative(".next/static", path).split(sep).join("/")}`);
 
+// The cache rules are an ES module for their unit tests; the worker is a
+// classic script, so inline them without the export keywords.
+const policy = readFileSync("sw/cache-policy.mjs", "utf8").replace(/^export /gm, "");
+
 const source = readFileSync("sw/sw.template.js", "utf8")
   .replace("__BUILD_ID__", buildId)
-  .replace("__PRECACHE__", JSON.stringify(precache));
+  .replace("__PRECACHE__", JSON.stringify(precache))
+  .replace("/* __CACHE_POLICY__ */", () => policy);
 
 mkdirSync("public", { recursive: true });
 writeFileSync("public/sw.js", source);
