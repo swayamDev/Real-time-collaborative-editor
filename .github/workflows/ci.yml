@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -60,16 +60,26 @@ jobs:
       # every build without it.
       NEXT_PUBLIC_E2E_HOOKS: "1"
       SYNC_INTERNAL_URL: http://localhost:8788
+      # Not a secret: a fixed value for the throwaway local Worker, shared
+      # with e2e/sync-server.ts. Production preflight refuses short values.
       SYNC_INTERNAL_SECRET: e2e-secret
       WRANGLER_SEND_METRICS: "false"
     steps:
       - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # A fresh auth secret for this run only, for the integration tests and
+      # the build. Playwright generates its own for the web server and Worker
+      # (e2e/auth-env.ts). Nothing here is stored or reused.
+      - name: Generate per-run secrets
+        run: |
+          secret="$(openssl rand -base64 32)"
+          echo "::add-mask::$secret"
+          echo "BETTER_AUTH_SECRET=$secret" >> "$GITHUB_ENV"
       - run: pnpm db:migrate
       # Server actions and authorization against the Postgres service.
       - run: pnpm test:integration
@@ -78,7 +88,7 @@ jobs:
       - run: pnpm check:bundles
       # Playwright global setup starts the sync Worker with wrangler dev.
       - run: pnpm test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report

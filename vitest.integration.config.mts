@@ -1,8 +1,18 @@
 import { fileURLToPath } from "node:url";
 import { config } from "dotenv";
 import { defineConfig } from "vitest/config";
+import { missingIntegrationEnv } from "./test/integration/required-env";
 
 config({ path: [".env.local", ".env"], quiet: true });
+
+// Fail before any test runs, naming everything missing at once.
+const missing = missingIntegrationEnv(process.env);
+if (missing.length > 0) {
+  throw new Error(
+    `Integration tests need these environment variables: ${missing.join(", ")}. ` +
+      "Set them in .env.local (see .env.example) or in the workflow.",
+  );
+}
 
 /**
  * Server actions and authorization against a real Postgres (the local
