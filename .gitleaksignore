@@ -1,0 +1,6 @@
+# Reviewed false positives (gitleaks fingerprints).
+# 75f2926 src/lib/preflight.test.ts: made-up test fixture values for BETTER_AUTH_SECRET and
+# SYNC_INTERNAL_SECRET (base64 of plain English text), never used anywhere. Replaced with
+# obviously fake low-entropy values in a later commit; listed here only because history keeps them.
+75f29263856ce97d3bbb5d597f4d9deee942d088:src/lib/preflight.test.ts:generic-api-key:16
+75f29263856ce97d3bbb5d597f4d9deee942d088:src/lib/preflight.test.ts:generic-api-key:25

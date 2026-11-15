@@ -13,7 +13,8 @@ function production(): Record<string, string> {
     VERCEL: "1",
     VERCEL_ENV: "production",
     DATABASE_URL: "postgres://app:pw@ep-calm-sea-123456-pooler.ap-southeast-1.aws.neon.tech/brahma?sslmode=require",
-    BETTER_AUTH_SECRET: "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5",
+    // Fake, low-entropy values: long enough for the rules, nothing secret.
+    BETTER_AUTH_SECRET: "not-a-real-secret-aaaaaaaaaaaaaaaaaaaaaaaa",
     BETTER_AUTH_URL: "https://editor.swayam.space",
     GOOGLE_CLIENT_ID: "client-id.apps.googleusercontent.com",
     GOOGLE_CLIENT_SECRET: "client-secret",
@@ -22,7 +23,7 @@ function production(): Record<string, string> {
     EMAIL_FROM: "Brahma <signin@editor.swayam.space>",
     SYNC_TOKEN_PRIVATE_KEY: productionKey(),
     SYNC_INTERNAL_URL: "https://brahma-sync.someone.workers.dev",
-    SYNC_INTERNAL_SECRET: "c3luYy1pbnRlcm5hbC1zZWNyZXQtYmFzZTY0LXZhbHVl",
+    SYNC_INTERNAL_SECRET: "not-a-real-secret-bbbbbbbbbbbbbbbbbbbbbbbb",
     NEXT_PUBLIC_SYNC_URL: "wss://brahma-sync.someone.workers.dev",
     NEXT_PUBLIC_SENTRY_DSN: "https://key@o0.ingest.sentry.io/0",
     AUTH_CLIENT_IP_HEADER: "x-forwarded-for",
