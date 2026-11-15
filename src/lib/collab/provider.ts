@@ -88,6 +88,8 @@ interface ProviderOptions {
   schemaVersion: number;
   /** Called with every role this tab learns from the server (null: no access). */
   onAccessLearned?: (role: Role | null) => void;
+  /** Called once if the server says the document was deleted. */
+  onDeleted?: () => void;
   environment?: ProviderEnvironment;
 }
 
@@ -222,6 +224,12 @@ export class SyncProvider {
    * applied at once; more access is only taken from the server, by
    * refreshing the token.
    */
+  /** Another tab of this user learned that the document was deleted. */
+  applyDeletedNotice(): void {
+    if (this.destroyed || this.terminal) return;
+    this.stop("deleted");
+  }
+
   applyAccessNotice(role: Role | null): void {
     if (this.destroyed || this.terminal) return;
     if (role === null) return this.stop("revoked");
@@ -277,6 +285,7 @@ export class SyncProvider {
     this.closeConnection(1000, "Stopped");
     this.flushing = false;
     if (reason === "revoked") this.options.onAccessLearned?.(null);
+    if (reason === "deleted") this.options.onDeleted?.();
     this.updateStatus();
   }
 

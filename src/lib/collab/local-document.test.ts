@@ -71,6 +71,24 @@ describe("a deleted document stays deleted", () => {
     local.destroy();
   });
 
+  it("reports itself closed once disposed or destroyed, so no editor accepts input", async () => {
+    const store = await tab();
+    const disposed = await LocalDocument.open(store, "one", new Uint8Array());
+    const destroyed = await LocalDocument.open(store, "two", new Uint8Array());
+    let changes = 0;
+    disposed.onChange(() => (changes += 1));
+    destroyed.onChange(() => (changes += 1));
+    expect([disposed.closed, destroyed.closed]).toEqual([false, false]);
+
+    await disposed.dispose();
+    destroyed.destroy();
+
+    expect([disposed.closed, destroyed.closed]).toEqual([true, true]);
+    // Listeners hear it, so the editor turns read-only without waiting for anything else.
+    expect(changes).toBe(2);
+    disposed.destroy();
+  });
+
   it("dispose waits for local edits already being written", async () => {
     const store = await tab();
     const local = await LocalDocument.open(store, "doc", new Uint8Array());

@@ -41,6 +41,7 @@ import {
   useUnsavedChanges,
   useStorageFull,
   useSyncSession,
+  useLocalClosed,
   useSyncStatus,
 } from "./use-sync-session";
 
@@ -109,8 +110,10 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, 
   const status = useSyncStatus(session);
   // The server's word on the role replaces the page's once a token arrives.
   const role = useRole(session, pageRole);
-  const readOnlyBody = !canWrite(role);
-  const readOnlyTitle = !can(role, "rename");
+  // A closed local document keeps nothing on the device: never edit it.
+  const closed = useLocalClosed(session);
+  const readOnlyBody = closed || !canWrite(role);
+  const readOnlyTitle = closed || !can(role, "rename");
 
   useEffect(() => {
     setRole(id, role);

@@ -80,9 +80,11 @@ export function useSyncSession(
       awareness.on("change", onPresenceChange);
 
       let provider: SyncProvider | null = null;
-      // Role changes this user's other tabs learned from the server.
+      // Role changes and deletions this user's other tabs learned from the server.
       const access = new AccessChannel(me.id, (notice) => {
-        if (notice.docId === documentId) provider?.applyAccessNotice(notice.role);
+        if (notice.docId !== documentId) return;
+        if ("deleted" in notice) provider?.applyDeletedNotice();
+        else provider?.applyAccessNotice(notice.role);
       });
       provider = new SyncProvider({
         url: syncUrl(documentId),
@@ -96,6 +98,7 @@ export function useSyncSession(
           tabs.setAcceptEdits(learned !== null && learned !== "viewer");
           access.post({ docId: documentId, role: learned });
         },
+        onDeleted: () => access.post({ docId: documentId, deleted: true }),
       });
       const current = provider;
       teardown = () => {
@@ -158,6 +161,18 @@ export function useUnsavedChanges(session: SyncSession | null): boolean {
   return useSyncExternalStore(
     session ? (listener) => session.provider.subscribe(listener) : noop,
     () => session?.provider.hasUnsavedChanges ?? false,
+    () => false,
+  );
+}
+
+/**
+ * The session's local document is disposed or destroyed (its copy discarded,
+ * or the session replaced): the editor must not accept input for it.
+ */
+export function useLocalClosed(session: SyncSession | null): boolean {
+  return useSyncExternalStore(
+    session ? (listener) => session.local.onChange(listener) : noop,
+    () => session?.local.closed ?? false,
     () => false,
   );
 }

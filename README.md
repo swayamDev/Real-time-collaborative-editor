@@ -336,7 +336,7 @@ Integration tests call every action and route as owner, editor, viewer, a strang
 
 - **Removed while offline.** When the device reconnects, the token request finds no access. Queued edits are never sent. The editor is replaced by "You no longer have access to this document." with **Download a copy** (an HTML file of what this device had, queued edits included), and the local copy is deleted.
 - **Made a viewer while offline.** The edits made while offline cannot be accepted. The editor shows "You can now only view this document. Edits you made offline weren't synced. Download a copy to keep them.", keeps that copy for download, deletes the local copy, opens the document again from the server, read-only.
-- **Online.** The same happens immediately, through the role message or `4403`. Another tab of the same user learns about it over a `BroadcastChannel`: less access applies at once, more access is confirmed with the server first.
+- **Online.** The same happens immediately, through the role message or `4403`. Another tab of the same user learns about it over a `BroadcastChannel`: less access applies at once, more access is confirmed with the server first. A deletion is passed on the same way, so every open tab shows the same screen even if its own connection missed the server's message. A tab whose local copy is closed (discarded, or replaced by a viewer session) never accepts typing, so no edit can live only in memory and be lost.
 
 <a id="data-on-the-device"></a>
 ### Data on the device

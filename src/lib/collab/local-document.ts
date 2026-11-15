@@ -120,6 +120,14 @@ export class LocalDocument {
     return this.meta?.halted ?? false;
   }
 
+  /**
+   * Disposed or destroyed: edits to the Y.Doc would no longer be kept on the
+   * device, so no editor may accept input for it (see useLocalClosed).
+   */
+  get closed(): boolean {
+    return this.disposed || this.destroyed;
+  }
+
   /** When the oldest local edit not yet written on the device was made. */
   get unwrittenSince(): number | null {
     let oldest: number | null = null;
@@ -230,6 +238,7 @@ export class LocalDocument {
     this.titleTimer = null;
     this.remoteTimer = null;
     this.remoteBatch = [];
+    this.emitChange();
     await Promise.all([...this.unwritten].map((edit) => edit.seq));
   }
 
@@ -241,6 +250,7 @@ export class LocalDocument {
     this.doc.getText(TITLE_FIELD).unobserve(this.onTitle);
     void this.flushRemote();
     if (this.titleTimer) clearTimeout(this.titleTimer);
+    this.emitChange();
   }
 
   private onUpdate = (update: Uint8Array, origin: unknown): void => {

@@ -23,10 +23,12 @@ describe("AccessChannel", () => {
 
     a.post({ docId: "doc", role: "viewer" });
     a.post({ docId: "doc", role: null });
+    a.post({ docId: "doc", deleted: true });
     await settle();
     expect(tabB).toEqual([
       { docId: "doc", role: "viewer" },
       { docId: "doc", role: null },
+      { docId: "doc", deleted: true },
     ]);
     expect(tabA).toEqual([]);
     expect(otherUser).toEqual([]);
@@ -39,6 +41,8 @@ describe("AccessChannel", () => {
     raw.postMessage({ docId: "doc", role: "admin" });
     raw.postMessage("viewer");
     raw.postMessage({ role: "viewer" });
+    raw.postMessage({ docId: "doc", deleted: false });
+    raw.postMessage({ docId: "doc", deleted: "yes" });
     await settle();
     raw.close();
     expect(received).toEqual([]);

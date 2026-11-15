@@ -157,6 +157,8 @@ interface Tab {
   tokens: TokenResult[];
   tokenRequests: number;
   learned: Array<Role | null>;
+  /** Times the provider reported a deletion (for the user's other tabs). */
+  deletedReports: number;
 }
 
 let tokenSerial = 0;
@@ -206,6 +208,7 @@ async function openTab(docId = "doc", options: { role?: Role; tokens?: TokenResu
     tokens: options.tokens ?? [],
     tokenRequests: 0,
     learned: [] as Array<Role | null>,
+    deletedReports: 0,
   };
   tab.provider = new SyncProvider({
     url: "ws://sync.test/documents/doc",
@@ -219,6 +222,9 @@ async function openTab(docId = "doc", options: { role?: Role; tokens?: TokenResu
       return tab.tokens.shift() ?? okToken(role);
     },
     onAccessLearned: (learned) => tab.learned.push(learned),
+    onDeleted: () => {
+      tab.deletedReports += 1;
+    },
   });
   tabs.push(tab);
   return tab;
@@ -395,6 +401,8 @@ describe("other states", () => {
     await until(() => tab.provider.getStatus() === "deleted", "deleted");
     await tick(BACKOFF_MAX_MS * 2);
     expect(tab.sockets).toHaveLength(1);
+    // Reported once, so the user's other tabs stop too.
+    expect(tab.deletedReports).toBe(1);
   });
 
   it("sends presence on connect and clears peers when the connection drops", async () => {
@@ -606,6 +614,18 @@ describe("roles", () => {
     expect(tab.provider.getRole()).toBe("viewer");
     tab.provider.applyAccessNotice(null);
     expect(tab.provider.getStatus()).toBe("revoked");
+  });
+
+  it("a deletion from another tab applies at once, and is not reported again", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    tab.provider.applyDeletedNotice();
+    expect(tab.provider.getStatus()).toBe("deleted");
+    // A later notice (revoke) cannot change a document that is already gone.
+    tab.provider.applyAccessNotice(null);
+    expect(tab.provider.getStatus()).toBe("deleted");
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(tab.sockets).toHaveLength(1);
   });
 });
 
