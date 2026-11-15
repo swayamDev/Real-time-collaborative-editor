@@ -1,5 +1,6 @@
 import { isDocumentId, schemaFromSubprotocols, tokenFromSubprotocols, verifySyncToken } from "@brahma/protocol";
 import { identityFromClaims, publicKeys, withoutIdentityHeaders, writeIdentity } from "./identity";
+import { logEvent } from "./log";
 import { bearerToken, secretMatches } from "./secret";
 
 export { DocumentRoom } from "./room";
@@ -10,6 +11,12 @@ function originAllowed(request: Request, env: Env): boolean {
   // stops other websites from opening sockets with a visitor's browser.
   if (origin === null) return true;
   return env.ALLOWED_ORIGINS.split(",").map((value) => value.trim()).includes(origin);
+}
+
+/** Refuse a request before any Durable Object, and log why. */
+function refused(status: number, reason: string): Response {
+  logEvent("request_refused", { status, reason });
+  return new Response(reason, { status });
 }
 
 function roomFor(env: Env, documentId: string): DurableObjectStub {
@@ -25,22 +32,22 @@ export default {
     const socket = /^\/documents\/([^/]+)$/.exec(url.pathname);
     if (socket) {
       if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
-        return new Response("Expected a WebSocket upgrade", { status: 426 });
+        return refused(426, "Expected a WebSocket upgrade");
       }
       // Validate before a Durable Object is ever created for this id.
-      if (!isDocumentId(socket[1])) return new Response("Invalid document id", { status: 400 });
-      if (!originAllowed(request, env)) return new Response("Origin not allowed", { status: 403 });
+      if (!isDocumentId(socket[1])) return refused(400, "Invalid document id");
+      if (!originAllowed(request, env)) return refused(403, "Origin not allowed");
 
       // Authenticate before a Durable Object is ever touched. The token
       // travels in the subprotocol header, so it stays out of URLs and logs.
       const offered = request.headers.get("Sec-WebSocket-Protocol");
       const token = tokenFromSubprotocols(offered);
-      if (!token) return new Response("Missing sync token", { status: 401 });
+      if (!token) return refused(401, "Missing sync token");
       let identity;
       try {
         identity = identityFromClaims(await verifySyncToken(token, publicKeys(env), socket[1]), schemaFromSubprotocols(offered));
       } catch {
-        return new Response("Invalid sync token", { status: 401 });
+        return refused(401, "Invalid sync token");
       }
       const headers = withoutIdentityHeaders(request.headers);
       writeIdentity(headers, identity);
@@ -51,16 +58,16 @@ export default {
     const internal = /^\/internal\/documents\/([^/]+)(\/title|\/access)?$/.exec(url.pathname);
     if (internal) {
       if (!(await secretMatches(bearerToken(request), env.SYNC_INTERNAL_SECRET))) {
-        return new Response("Unauthorized", { status: 401 });
+        return refused(401, "Unauthorized");
       }
-      if (!isDocumentId(internal[1])) return new Response("Invalid document id", { status: 400 });
+      if (!isDocumentId(internal[1])) return refused(400, "Invalid document id");
       const expected = internal[2] ? "POST" : "DELETE";
       if (request.method !== expected) {
-        return new Response("Method not allowed", { status: 405 });
+        return refused(405, "Method not allowed");
       }
       return roomFor(env, internal[1]).fetch(request);
     }
 
-    return new Response("Not found", { status: 404 });
+    return refused(404, "Not found");
   },
 } satisfies ExportedHandler<Env>;

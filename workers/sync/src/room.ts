@@ -30,6 +30,7 @@ import { DurableObject } from "cloudflare:workers";
 import * as Y from "yjs";
 import { AwarenessRegistry, decodeAwarenessUpdate, encodeAwarenessEntries } from "./awareness-registry";
 import { effectiveRole, publicKeys, readIdentity } from "./identity";
+import { logEvent } from "./log";
 import { decideSchema, schemaBounds } from "./schema-policy";
 import { RoomStorage } from "./storage";
 import { type SnapshotStore, createSnapshotStore } from "./store";
@@ -129,6 +130,7 @@ export class DocumentRoom extends DurableObject<Env> {
     // A browser cannot read the status of a failed upgrade, so accept and
     // close with a code the client understands.
     const refuse = (code: number, reason: string) => {
+      logEvent("connect_refused", { code, reason });
       server.accept();
       server.close(code, reason);
       return upgraded(client);
@@ -649,7 +651,7 @@ export class DocumentRoom extends DurableObject<Env> {
   }
 
   private reject(ws: WebSocket, code: number, reason: string): void {
-    console.warn(`Rejected message: ${reason}`);
+    logEvent("socket_closed", { code, reason });
     this.removeSocket(ws);
     try {
       ws.close(code, reason);

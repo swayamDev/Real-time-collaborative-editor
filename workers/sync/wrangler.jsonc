@@ -1,6 +1,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "brahma-sync",
+  // Development. Only `wrangler deploy --env production` produces the
+  // production Worker (named brahma-sync); a plain deploy can never
+  // overwrite it with these localhost settings.
+  "name": "brahma-sync-dev",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-23",
   // pg needs Node APIs and TCP sockets.
@@ -18,8 +21,28 @@
     "SCHEMA_VERSION_MIN": "1",
     "SCHEMA_VERSION_MAX": "1"
   },
-  "observability": { "enabled": true }
-  // Secrets (set in .dev.vars locally, see .dev.vars.example):
-  //   DATABASE_URL          Postgres connection string (Neon pooled URL in production)
-  //   SYNC_INTERNAL_SECRET  shared with the Next app for rename and delete
+  "observability": { "enabled": true },
+  // Secrets (set in .dev.vars locally, see .dev.vars.example; in production
+  // with `wrangler secret put <NAME> --env production`):
+  //   DATABASE_URL            Postgres connection string (Neon pooled URL in production)
+  //   SYNC_INTERNAL_SECRET    shared with the Next app for rename, delete and access changes
+  //   SYNC_TOKEN_PUBLIC_KEYS  JWKS that verifies sync tokens
+  //   SENTRY_DSN              production only: where Worker errors go
+  "env": {
+    "production": {
+      "name": "brahma-sync",
+      // Served at brahma-sync.<account subdomain>.workers.dev.
+      "workers_dev": true,
+      "durable_objects": {
+        "bindings": [{ "name": "DOCUMENT_ROOM", "class_name": "DocumentRoom" }]
+      },
+      // Checked by scripts/preflight-worker.ts before every production deploy.
+      "vars": {
+        "ALLOWED_ORIGINS": "https://editor.swayam.space",
+        "SCHEMA_VERSION_MIN": "1",
+        "SCHEMA_VERSION_MAX": "1"
+      },
+      "observability": { "enabled": true }
+    }
+  }
 }
