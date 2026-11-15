@@ -117,6 +117,8 @@ test("reloading B mid-session loses nothing", async ({ accounts, openAs }) => {
   const { a, b } = await pair({ accounts, openAs });
   await a.getByTestId("title").press("Enter");
   await a.keyboard.type("Before reload.");
+  // Grace types at her caret, so place it only once all of Ada's text has arrived.
+  await expectText(b, "Before reload.");
   await caretAtEnd(b);
   await b.keyboard.type(" Grace was here.");
   await expectSaved(b);
