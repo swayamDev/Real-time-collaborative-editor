@@ -583,7 +583,7 @@ Vercel overwrites `X-Forwarded-For` with the client's address and does not forwa
 
 ### The deploy workflow
 
-[deploy.yml](.github/workflows/deploy.yml) runs when CI succeeds for a push to `main`, or by hand, and deploys exactly the commit CI tested. Its single job uses the `production` environment, so it waits for your approval, then:
+[deploy.yml](.github/workflows/deploy.yml) runs when CI succeeds for a push to `main`, or by hand, and deploys exactly the commit CI tested. It first checks the repository variable `DEPLOY_ENABLED`: unless it is `true`, the run ends successfully with "Deploy disabled" and nothing else starts, so CI stays green before setup is finished. Otherwise the deploy job uses the `production` environment, so it waits for your approval, then:
 
 1. **Backs up the database:** a copy-on-write Neon branch named `backup-<time>-<commit>` ([scripts/neon-backup.ts](scripts/neon-backup.ts)), keeping the newest three. If the backup fails, the deploy stops before any migration.
 2. **Migrates** with the direct connection string.
@@ -650,8 +650,9 @@ Do these by hand, in order:
 9. **Vercel:** import the repository; set the Production variables above (Preview and Development empty); add the domain `editor.swayam.space`.
 10. **DNS:** at your DNS host, create the `editor` CNAME record Vercel shows. Wait for Vercel's certificate.
 11. **GitHub environment:** create `production`, with you as the required reviewer and `main` as the only deployment branch; add its secrets and variables (above).
-12. **Deploy:** push to `main` (or run the Deploy workflow by hand) and approve it.
-13. **Smoke test** (below).
+12. **Enable deploys,** last, once everything above is done: in Settings, Secrets and variables, Actions, Variables, add the repository variable `DEPLOY_ENABLED` with the value `true`. Until then every Deploy run ends with "Deploy disabled". Set it to anything else (or delete it) to pause deploys.
+13. **Deploy:** push to `main` (or run the Deploy workflow by hand) and approve it.
+14. **Smoke test** (below).
 
 If `*.workers.dev` turns out to be blocked on the mobile networks you test, move `swayam.space` DNS to Cloudflare and give the Worker a custom domain such as `sync.editor.swayam.space`; only `NEXT_PUBLIC_SYNC_URL` and `SYNC_INTERNAL_URL` change.
 

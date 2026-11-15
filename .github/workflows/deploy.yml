@@ -5,9 +5,10 @@ name: Deploy
 # pull_request) with no secrets and a read-only token, and this workflow
 # ignores anything that is not a push to main.
 #
-# The single job uses the "production" environment, which (configured in
-# the repository settings) requires a reviewer's approval and accepts only
-# the main branch. App secrets never enter GitHub Actions: Vercel builds the
+# The deploy job runs only when the repository variable DEPLOY_ENABLED is
+# "true", and uses the "production" environment, which (configured in the
+# repository settings) requires a reviewer's approval and accepts only the
+# main branch. App secrets never enter GitHub Actions: Vercel builds the
 # app remotely with the variables it holds. GitHub holds only deploy tokens,
 # the Neon API key, and the database URL that migrations need.
 
@@ -26,11 +27,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Back up, migrate, deploy the Worker, deploy the app
+  # A second switch besides the environment's reviewer: nothing deploys until
+  # the repository variable DEPLOY_ENABLED is "true" (the last setup step).
+  # Otherwise the run ends green with "Deploy disabled", and the deploy job
+  # (and with it the production environment and its secrets) never starts.
+  gate:
+    name: Check that deploys are enabled
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          DEPLOY_ENABLED: ${{ vars.DEPLOY_ENABLED }}
+        run: |
+          if [ "$DEPLOY_ENABLED" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Deploy enabled (DEPLOY_ENABLED is true)."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            message='Deploy disabled: set the repository variable DEPLOY_ENABLED to "true" to deploy (README, First production setup).'
+            echo "::notice title=Deploy disabled::$message"
+            echo "$message" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  deploy:
+    name: Back up, migrate, deploy the Worker, deploy the app
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
