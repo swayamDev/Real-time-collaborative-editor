@@ -34,7 +34,12 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_E2E_HOOKS: process.env.NEXT_PUBLIC_E2E_HOOKS === "1" ? "1" : "0",
   },
   async headers() {
-    return [{ source: "/:path*", headers: SECURITY_HEADERS }];
+    return [
+      { source: "/:path*", headers: SECURITY_HEADERS },
+      // Browsers check for a new service worker on navigation; never let a
+      // cache answer for them, so a deploy reaches every device promptly.
+      { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache" }] },
+    ];
   },
   // Every route reads per-request data (the database and the theme cookie),
   // so there is no static shell to prerender. The classic dynamic model keeps

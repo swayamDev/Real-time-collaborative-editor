@@ -27,6 +27,8 @@ test("every kind of response carries the security headers", async ({ page }) => 
     }
     expect(headers["x-powered-by"]).toBeUndefined();
   }
+  // The service worker script is never answered from a cache.
+  expect(responses[3].headers()["cache-control"]).toBe("no-cache");
 });
 
 test("the app cannot be framed by another site", async ({ page, baseURL }) => {
