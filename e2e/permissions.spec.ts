@@ -94,6 +94,10 @@ test("4. revoked while offline: queued edits are refused, the download keeps the
   await share(ada, accounts.grace.email, "editor");
   const graceContext = await contextAs(accounts.grace);
   const grace = await graceContext.newPage();
+  // Shown in the run's output: a failed or skipped local cleanup warns.
+  grace.on("console", (message) => {
+    if (message.type() === "warning" || message.type() === "error") console.log(`[grace ${message.type()}] ${message.text()}`);
+  });
   await grace.goto(url);
   await expectSaved(grace);
   await expectReadyOffline(grace);
@@ -115,26 +119,28 @@ test("4. revoked while offline: queued edits are refused, the download keeps the
   expect(copy).toContain("Grace offline.");
 
   // The local copy is gone from Grace's device, and Ada never got the edit.
+  // The poll returns what is still stored, so a failure shows which fields
+  // (pending count, halted, last opened) were written, and by what.
   await expect
     .poll(() =>
       grace.evaluate(async (id) => {
-        const name = (await indexedDB.databases()).map((info) => info.name ?? "").find((n) => n.startsWith("brahma:"));
-        if (!name) return false;
+        const names = (await indexedDB.databases()).map((info) => info.name ?? "").filter((n) => n.startsWith("brahma:"));
+        if (names.length === 0) return null;
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
-          const request = indexedDB.open(name);
+          const request = indexedDB.open(names[0]);
           request.onsuccess = () => resolve(request.result);
           request.onerror = () => reject(request.error);
         });
-        const found = await new Promise<boolean>((resolve) => {
+        const record = await new Promise<unknown>((resolve) => {
           const request = db.transaction("documents").objectStore("documents").get(id);
-          request.onsuccess = () => resolve(request.result !== undefined);
-          request.onerror = () => resolve(false);
+          request.onsuccess = () => resolve(request.result ?? null);
+          request.onerror = () => resolve({ readError: String(request.error) });
         });
         db.close();
-        return found;
+        return record === null ? null : { databases: names, record };
       }, documentId),
     )
-    .toBe(false);
+    .toBeNull();
   await ada.reload();
   await expectSaved(ada);
   expect(await bodyText(ada)).toBe("Shared.");

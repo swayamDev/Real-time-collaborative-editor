@@ -135,7 +135,14 @@ export function useSyncSession(
 
   const clearLocalCopy = useCallback(async () => {
     const store = await getLocalStore(user.id);
-    await store?.deleteDocument(documentId).catch(() => {});
+    if (!store) {
+      console.warn("No local store is open, so this device's copy of the document was not cleared.");
+      return;
+    }
+    // Reported, not thrown: the page still shows "Download a copy" either way.
+    await store.deleteDocument(documentId).catch((error: unknown) => {
+      console.warn("Could not clear this device's copy of the document", error);
+    });
   }, [documentId, user.id]);
 
   return { session, rebuildAsViewer, clearLocalCopy };
