@@ -9,7 +9,7 @@
     "noEmit": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "allowImportingTsExtensions": false,
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false
   },
   "include": ["src", "test", "vitest.config.ts"]

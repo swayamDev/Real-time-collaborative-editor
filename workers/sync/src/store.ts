@@ -39,7 +39,7 @@ export class MemorySnapshotStore implements SnapshotStore {
   async save(documentId: string, record: DocumentRecord): Promise<boolean> {
     if (this.failNextSave) {
       this.failNextSave = false;
-      throw new Error("Simulated database failure");
+      throw new Error("Simulated database failure (expected: the retry test triggers it)");
     }
     this.saves += 1;
     if (!this.rows.has(documentId) || this.rows.get(documentId)!.deleted) return false;

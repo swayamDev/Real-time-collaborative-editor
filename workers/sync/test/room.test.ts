@@ -342,6 +342,10 @@ describe("snapshots to Postgres", () => {
     await a.until(() => a.last("ack")!.count >= 2, "stored");
 
     // Leaving makes the snapshot urgent; the first attempt fails.
+    // The failure is meant to escape alarm(): a throwing alarm is how the
+    // Durable Object runtime knows to retry it, so the Workers runtime logs
+    // "Simulated database failure" as an uncaught exception. That line is
+    // expected; catching the error would turn off the retry this checks.
     memoryStore.failNextSave = true;
     a.close();
     // The runtime retries a throwing alarm with backoff (2s first).

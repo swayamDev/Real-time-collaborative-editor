@@ -1,6 +1,6 @@
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
-import { generateTestKeys } from "./test/generate-keys";
+import { generateTestKeys } from "./test/generate-keys.ts";
 
 // A fresh key pair for every run, so the repo never holds a private key.
 const keys = await generateTestKeys();
