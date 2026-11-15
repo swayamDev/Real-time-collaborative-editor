@@ -84,7 +84,7 @@ Sync server ([workers/sync/.dev.vars.example](workers/sync/.dev.vars.example); W
 | `ALLOWED_ORIGINS` | In `wrangler.jsonc`: browser origins allowed to open a socket. |
 | `SCHEMA_VERSION_MIN`, `SCHEMA_VERSION_MAX` | In `wrangler.jsonc`: document schema versions this deployment accepts (see [Changing the document schema](#changing-the-document-schema)). |
 
-There is no public deployment yet. Phase 4 adds what one needs: accounts, permissions enforced on both servers, and the protections in the [threat model](#threat-model).
+Production values, and where each one is set, are in [Deploying](#deploying).
 
 ## Architecture
 
@@ -531,6 +531,146 @@ Light turmeric is `#B87D10` rather than `#C98A12`, because the original measured
 
 Radius follows hierarchy: none on the canvas, 4 px on inline code, 6 px on inputs and buttons, 8 px on menus and the toolbar, 10 px on dialogs. Hairline borders separate surfaces. Shadows appear only on floating layers.
 
+## Deploying
+
+Production: the app on Vercel at **https://editor.swayam.space**, the sync Worker on Cloudflare at `brahma-sync.<account subdomain>.workers.dev`, Postgres on Neon, email through Resend, sign-in with Google and email links, errors in Sentry.
+
+### Regions
+
+- **Neon: Singapore (`aws-ap-southeast-1`).** Neon does not offer Mumbai ([regions](https://neon.com/docs/introduction/regions)), and a project's region is fixed when it is created.
+- **Vercel functions: Singapore (`sin1`),** set in [vercel.json](vercel.json), next to the database, because every page and action queries it.
+- **Durable Objects** are created near the location of the first request for them and stay there: each document's room lives near whoever opened it first ([Durable Objects](https://developers.cloudflare.com/durable-objects/reference/data-location/)). Rooms reach Neon over TCP for first loads and snapshots only, a few times a minute while someone types.
+
+### Environment
+
+Every production secret is generated once for production and stored only where listed. None is ever copied from `.env.local`, `.dev.vars`, CI or the end-to-end key file. Preflight refuses development values (below).
+
+**App: Vercel, Production environment only.** Preview and Development stay empty.
+
+| Variable | Secret | Value |
+| --- | --- | --- |
+| `DATABASE_URL` | yes | Neon **pooled** string (host contains `-pooler`, `sslmode=require`) |
+| `BETTER_AUTH_SECRET` | yes | `openssl rand -base64 32` |
+| `BETTER_AUTH_URL` | | `https://editor.swayam.space` |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | secret: yes | From the Google OAuth client |
+| `EMAIL_TRANSPORT` | | `resend` |
+| `RESEND_API_KEY` | yes | Sending-only key, limited to `editor.swayam.space` |
+| `EMAIL_FROM` | | `Brahma <signin@editor.swayam.space>` |
+| `SYNC_TOKEN_PRIVATE_KEY` | yes | From `pnpm keys:sync --production` (kid `prod-...`) |
+| `SYNC_INTERNAL_URL` | | `https://brahma-sync.<account subdomain>.workers.dev` |
+| `SYNC_INTERNAL_SECRET` | yes | `openssl rand -base64 32`; the same value in the Worker |
+| `NEXT_PUBLIC_SYNC_URL` | | `wss://brahma-sync.<account subdomain>.workers.dev` (built into the client) |
+| `AUTH_CLIENT_IP_HEADER` | | `x-forwarded-for` (see below) |
+| `NEXT_PUBLIC_SENTRY_DSN` | | The Sentry project's DSN (public by design) |
+| `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | token: yes | Optional: upload source maps during the build |
+| `MAGIC_LINK_DAILY_LIMIT`, `NEXT_PUBLIC_E2E_HOOKS` | | Never set (the default fits Resend's free plan; the hooks are test-only) |
+
+**Sync Worker: Cloudflare.** Plain values are in `env.production` in [wrangler.jsonc](workers/sync/wrangler.jsonc): `ALLOWED_ORIGINS` is `https://editor.swayam.space` only, and the schema bounds are 1 to 1. Secrets are set by hand, so GitHub never holds them: `pnpm --filter @brahma/sync exec wrangler secret put <NAME> --env production` for `DATABASE_URL` (Neon pooled), `SYNC_INTERNAL_SECRET`, `SYNC_TOKEN_PUBLIC_KEYS` (the JWKS from `pnpm keys:sync --production`) and `SENTRY_DSN`. The development Worker is named `brahma-sync-dev`, so only `--env production` produces `brahma-sync`.
+
+**GitHub: the `production` environment** (required reviewer, `main` only). Secrets: `VERCEL_TOKEN`, `CLOUDFLARE_API_TOKEN` (Workers edit only), `NEON_API_KEY` (project-scoped where your Neon account allows), `PROD_DATABASE_URL_UNPOOLED` (Neon direct string, for migrations). Variables: `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, `CLOUDFLARE_ACCOUNT_ID`, `NEON_PROJECT_ID`. App secrets never enter GitHub Actions.
+
+**Production keys.** `pnpm keys:sync --production` prints a fresh Ed25519 pair and writes nothing. The private key goes to Vercel, the public key set to the Worker. To rotate: add the new public key next to the old one in `SYNC_TOKEN_PUBLIC_KEYS` and deploy the Worker, switch the private key in Vercel and deploy the app, then remove the old public key after 15 minutes (longer than a token lives).
+
+**Preflight.** `pnpm build` runs [scripts/preflight-app.ts](scripts/preflight-app.ts) first on every Vercel build, and the server repeats the checks when it starts ([instrumentation.ts](src/instrumentation.ts)). It refuses to build or serve with any required variable missing, or with any of: console or file email, test hooks, a local or unpooled database, a non-TLS sync URL, the example secrets, a sync key that is not a production key, an app URL other than `https://editor.swayam.space`, or no trusted client address header on Vercel. `pnpm preflight:worker` refuses a Worker deploy whose production environment is wrong or whose secrets are not all set.
+
+### Previews are off
+
+[vercel.json](vercel.json) turns off Git deployments, so a push creates no deployment of any kind ([git configuration](https://vercel.com/docs/project-configuration/git-configuration)); production is deployed only by the workflow below. As a second layer, Vercel's Preview environment has no variables, and preflight runs on every Vercel build, so a preview that is ever created (for example `vercel deploy` without `--prod`) fails to build and can reach nothing. Separate preview resources (a Neon branch, a second Worker, more keys) would be a second set of secrets to guard, and Google OAuth does not accept wildcard redirect URIs, so previews could not sign in with Google anyway. CI and the end-to-end suite do the work previews would.
+
+### Trusted client address
+
+Vercel overwrites `X-Forwarded-For` with the client's address and does not forward addresses from clients, to prevent spoofing ([request headers](https://vercel.com/docs/headers/request-headers)). So production sets `AUTH_CLIENT_IP_HEADER=x-forwarded-for`, which turns on per-address sign-in limits (see [Rate limits](#rate-limits)). The smoke test checks it.
+
+### The deploy workflow
+
+[deploy.yml](.github/workflows/deploy.yml) runs when CI succeeds for a push to `main`, or by hand, and deploys exactly the commit CI tested. Its single job uses the `production` environment, so it waits for your approval, then:
+
+1. **Backs up the database:** a copy-on-write Neon branch named `backup-<time>-<commit>` ([scripts/neon-backup.ts](scripts/neon-backup.ts)), keeping the newest three. If the backup fails, the deploy stops before any migration.
+2. **Migrates** with the direct connection string.
+3. **Deploys the Worker** after its preflight.
+4. **Deploys the app** with `vercel deploy --prod`: Vercel builds it remotely with the variables it holds, so app secrets never reach GitHub Actions. The build runs preflight.
+
+**Pull requests from forks.** CI runs on `pull_request` (never `pull_request_target`) with a read-only token, so runs from forks get no secrets. The deploy workflow does not run on pull requests and ignores anything but a push to `main`, and the `production` environment accepts only `main` and requires a reviewer. Keep "Require approval for first-time contributors" on in the repository's Actions settings.
+
+### Release order
+
+1. **Migrate,** additively (expand). The running app must keep working with the new schema.
+2. **Deploy the Worker,** if it changed. A document schema release raises `SCHEMA_VERSION_MAX` here (see [Changing the document schema](#changing-the-document-schema)).
+3. **Deploy the app.**
+4. **Later releases:** contracting migrations (dropping what nothing uses any more) and raising `SCHEMA_VERSION_MIN` once old clients have updated.
+
+The workflow runs steps 1 to 3 in that order on every deploy; steps that have nothing to do are no-ops.
+
+### Backups and rollback
+
+- **Neon's restore window:** on the free plan, the history kept for instant restore is **6 hours** ([history window](https://neon.com/docs/postgres/backup-restore/history-window)). Within it, the production branch can be restored to any moment.
+- **Backup branches:** every deploy makes one just before migrating, and the newest three are kept, so a state from before a migration stays available after the 6 hours.
+
+To roll back:
+
+1. **App only** (no migration involved): promote the previous production deployment in Vercel's dashboard, or run the deploy workflow by hand on the previous commit.
+2. **A migration went wrong:** stop deploys, then in the Neon console restore the production branch either to a time just before the migration (within 6 hours) or from the deploy's `backup-...` branch. Neon keeps the state before a restore as its own branch, so the restore can itself be undone. Then deploy the app version that matches that database.
+3. **Writes since the backup are lost** by a restore. Restore only when the migration damaged data; otherwise fix forward with a new migration.
+
+<a id="service-worker-updates"></a>
+### Service worker updates
+
+`/sw.js` is served with `Cache-Control: no-cache`, so browsers find a new version on their next visit. Static files are cached per version (`brahma-static-<build>`), pages per user (`brahma-pages:<userId>`). When a new version activates, it keeps the previous version's static files, because tabs still running it, and page copies made by it, need them (Vercel Hobby has no skew protection), and marks the page copies for refresh. The refresh runs only for a user the server confirms, the same gate as [cleanup](#data-on-the-device): it re-fetches each copy, drops copies that no longer exist, stops and keeps everything when offline or signed out, and only then deletes the earlier version's files. The first production deploy has no earlier caches; it is a new origin.
+
+### Monitoring
+
+- **Errors:** the app (browser and server) and the Worker report to Sentry (free Developer plan, about 5,000 errors a month). Only errors, no performance traces or replays. Sentry's own personal data collection is off, and every event passes through [scrubEvent](packages/protocol/src/scrub.ts): no user, request body, cookies, headers or query strings, no console breadcrumbs, and emails, tokens and share-link tokens replaced.
+- **Workers Logs:** one JSON line per refused request (`request_refused`), refused connection (`connect_refused`) and closed socket (`socket_closed`), with the code and a fixed reason. Count them by code to spot problems (`4401` refresh trouble, `4403` removals, `1007`/`1009` rejected edits, `4426` stale bundles).
+- **Vercel runtime logs** on Hobby keep about an hour ([Hobby](https://vercel.com/docs/plans/hobby)); Sentry is where errors are kept.
+
+In the first week, watch:
+
+| What | Free limit | Where |
+| --- | --- | --- |
+| Durable Object rows written | 100,000 a day; operations fail beyond it ([pricing](https://developers.cloudflare.com/durable-objects/platform/pricing)) | Cloudflare dashboard, Durable Objects |
+| Durable Object and Worker requests | Incoming WebSocket messages count 20 to 1 ([pricing](https://developers.cloudflare.com/durable-objects/platform/pricing)) | Cloudflare dashboard |
+| Resend emails | 100 a day (the app stops at 80 sign-in links), about 3,000 a month | Resend dashboard; "quota" errors in Sentry |
+| Neon compute | 100 compute-hours a month per project, 1 GB storage ([free plan](https://neon.com/faqs/free-plan-limits-and-quotas)) | Neon console, Usage |
+| Errors | about 5,000 a month | Sentry |
+
+### First production setup
+
+Do these by hand, in order:
+
+1. **GitHub:** create the public repository `swayamDev/Real-time-collaborative-editor` and push `main`. In Settings: turn on **Private vulnerability reporting** (Security), and keep **Require approval for first-time contributors** for workflows from forks (Actions).
+2. **Accounts:** Vercel (Hobby), Cloudflare (Workers Free), Neon (Free), Resend (Free), Sentry (Developer), a Google Cloud project.
+3. **Neon:** create the project in **AWS Singapore (`aws-ap-southeast-1`)**. Copy the pooled and the direct connection strings and the project ID. Create an API key for the deploy backups (project-scoped if your account offers it).
+4. **Secrets, on your machine:** `pnpm keys:sync --production`, and `openssl rand -base64 32` twice (`BETTER_AUTH_SECRET`, `SYNC_INTERNAL_SECRET`). Keep them in a password manager only.
+5. **Sentry:** create one project for the app and one for the Worker (or one for both). Copy the DSNs.
+6. **Cloudflare:** `pnpm --filter @brahma/sync exec wrangler login`; set the four Worker secrets with `--env production`; note your `workers.dev` subdomain; create an API token for GitHub with Workers edit permission only.
+7. **Resend:** confirm in the dashboard that your plan allows another domain (Resend's free plan allows three since August 2026); add `editor.swayam.space`; create the DNS records it shows (they sit under `send.editor.swayam.space` and `resend._domainkey.editor.swayam.space`, so they do not conflict with the app's CNAME) at your DNS host; wait for verification; create a sending-only API key limited to that domain.
+8. **Google Cloud:**
+   - OAuth consent screen: External; app name Brahma; a support email; authorized domain `swayam.space`; scopes `openid`, `email` and `profile` only; publish to **In production**. These are non-sensitive scopes, so no review is needed ([Google](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification)).
+   - OAuth client (Web application): authorized JavaScript origin `https://editor.swayam.space`, authorized redirect URI `https://editor.swayam.space/api/auth/callback/google`.
+9. **Vercel:** import the repository; set the Production variables above (Preview and Development empty); add the domain `editor.swayam.space`.
+10. **DNS:** at your DNS host, create the `editor` CNAME record Vercel shows. Wait for Vercel's certificate.
+11. **GitHub environment:** create `production`, with you as the required reviewer and `main` as the only deployment branch; add its secrets and variables (above).
+12. **Deploy:** push to `main` (or run the Deploy workflow by hand) and approve it.
+13. **Smoke test** (below).
+
+If `*.workers.dev` turns out to be blocked on the mobile networks you test, move `swayam.space` DNS to Cloudflare and give the Worker a custom domain such as `sync.editor.swayam.space`; only `NEXT_PUBLIC_SYNC_URL` and `SYNC_INTERNAL_URL` change.
+
+### Smoke test
+
+Run against production after the first deploy and after any risky change:
+
+1. **Google sign-in** works on https://editor.swayam.space.
+2. **Email sign-in,** in a private window: the link arrives from `signin@editor.swayam.space` and works once.
+3. **Rate limit:** a sixth sign-in link for the same email within an hour says "Too many attempts. Try again in a few minutes."
+4. **Forged client address:** `curl -X POST https://editor.swayam.space/api/auth/sign-in/magic-link -H "Origin: https://editor.swayam.space" -H "Content-Type: application/json" -H "X-Forwarded-For: 1.2.3.4" -d '{"email":"<your address>","callbackURL":"/"}'`, then open that link. In Neon, the newest row in `session` must show your real address, not `1.2.3.4`.
+5. **Create, type, reload:** the text is still there.
+6. **Share as viewer** with the second account: it sees live edits, cannot type, and shows "View only".
+7. **Make them an editor:** they can type without reloading. Edit from a laptop and a phone at once; both see each other's presence and text.
+8. **Offline:** on the phone, open the document, turn on airplane mode, type ("Saved on this device"), turn it off ("Syncing", then "Saved"); the laptop shows the edit.
+9. **Remove access:** their open tab shows "You no longer have access to this document."
+10. **Sign out** on the phone: in its developer tools, no `brahma:*` IndexedDB databases and no `brahma-pages` caches remain, and `/` goes to sign-in.
+11. **Headers:** `curl -sI https://editor.swayam.space/sign-in` shows the Content-Security-Policy, X-Frame-Options and Strict-Transport-Security headers.
+
 ## Next
 
 Agreed out of scope for Phase 4:
@@ -553,7 +693,8 @@ src/
   lib/permissions.ts   the role matrix
   server/              auth, guards, sharing, sync tokens, rate limits, the sync server's internal API
 packages/protocol/     wire format, limits, presence rules shared by client and server
-sw/                    service worker template (built into public/sw.js)
+sw/                    service worker template and its cache rules (built into public/sw.js)
+scripts/               preflight checks, production keys, Neon backups, service worker build
 workers/sync/          Cloudflare Worker: router, DocumentRoom Durable Object, Postgres store
 test/integration/      server actions, routes and authorization against Postgres
 e2e/                   Playwright tests: signed-in people in separate browsers, offline, permissions
