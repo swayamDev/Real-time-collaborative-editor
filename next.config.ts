@@ -69,6 +69,9 @@ export default withSentryConfig(nextConfig, {
   authToken: process.env.SENTRY_AUTH_TOKEN,
   silent: !process.env.CI,
   telemetry: false,
+  // The after-build step creates the release and uploads source maps, which
+  // needs a token (production builds only). Without one it would only warn.
+  useRunAfterProductionCompileHook: Boolean(process.env.SENTRY_AUTH_TOKEN),
   sourcemaps: {
     disable: !process.env.SENTRY_AUTH_TOKEN,
     deleteSourcemapsAfterUpload: true,
