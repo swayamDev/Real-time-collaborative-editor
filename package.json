@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && node scripts/build-sw.mjs",
+    "build": "tsx scripts/preflight-app.ts && next build && node scripts/build-sw.mjs",
     "start": "next start",
     "lint": "eslint && node scripts/check-no-em-dash.mjs",
     "typecheck": "next typegen && tsc --noEmit && pnpm --filter @brahma/sync typecheck",
@@ -19,7 +19,8 @@
     "dev:sync": "pnpm --filter @brahma/sync dev",
     "db:claim-local": "node scripts/claim-local.mjs",
     "test:integration": "vitest run -c vitest.integration.config.mts",
-    "keys:sync": "node scripts/sync-keys.mjs"
+    "keys:sync": "node scripts/sync-keys.mjs",
+    "preflight:worker": "tsx scripts/preflight-worker.ts"
   },
   "dependencies": {
     "@brahma/protocol": "workspace:*",
