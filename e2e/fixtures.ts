@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { type BrowserContext, type Page, test as base } from "@playwright/test";
 import pg from "pg";
-import { signIn, uniqueEmail } from "./auth";
+import { clientAddress, signIn, uniqueEmail } from "./auth";
 import { databaseUrl, ensureSyncServer } from "./sync-server";
 
 export { expect } from "@playwright/test";
@@ -73,10 +73,22 @@ export const test = base.extend<
     await provide(accounts.ada.storageState);
   },
 
+  // Each context is its own client address (trusted in end-to-end runs, see
+  // playwright.config.ts), so per-address auth limits such as get-session's
+  // 100 a minute apply per test, as they would per person, not to the suite.
+  extraHTTPHeaders: async ({}, provide) => {
+    await provide({ "x-forwarded-for": clientAddress() });
+  },
+
   contextAs: async ({ browser, baseURL }, provide) => {
     const opened: BrowserContext[] = [];
     await provide(async (account) => {
-      const context = await browser.newContext({ viewport: VIEWPORT, baseURL, storageState: account.storageState });
+      const context = await browser.newContext({
+        viewport: VIEWPORT,
+        baseURL,
+        storageState: account.storageState,
+        extraHTTPHeaders: { "x-forwarded-for": clientAddress() },
+      });
       opened.push(context);
       return context;
     });

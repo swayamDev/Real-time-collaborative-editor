@@ -3,6 +3,8 @@ packages:
   - workers/*
 
 allowBuilds:
+  # Sentry's CLI uploads source maps during the Vercel build.
+  "@sentry/cli": true
   esbuild: true
   sharp: false
   unrs-resolver: false

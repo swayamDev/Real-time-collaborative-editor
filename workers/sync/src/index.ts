@@ -1,9 +1,20 @@
-import { isDocumentId, schemaFromSubprotocols, tokenFromSubprotocols, verifySyncToken } from "@brahma/protocol";
+import { isDocumentId, schemaFromSubprotocols, scrubEvent, tokenFromSubprotocols, verifySyncToken } from "@brahma/protocol";
+import * as Sentry from "@sentry/cloudflare";
 import { identityFromClaims, publicKeys, withoutIdentityHeaders, writeIdentity } from "./identity";
 import { logEvent } from "./log";
 import { bearerToken, secretMatches } from "./secret";
 
-export { DocumentRoom } from "./room";
+import { DocumentRoom as Room } from "./room";
+
+/**
+ * Errors only, no personal data (scrubEvent, shared with the app), and
+ * nothing at all without SENTRY_DSN (development and tests).
+ */
+function sentryOptions(env: Env) {
+  return { dsn: env.SENTRY_DSN, enabled: Boolean(env.SENTRY_DSN), sendDefaultPii: false, tracesSampleRate: 0, beforeSend: scrubEvent };
+}
+
+export const DocumentRoom = Sentry.instrumentDurableObjectWithSentry(sentryOptions, Room);
 
 function originAllowed(request: Request, env: Env): boolean {
   const origin = request.headers.get("Origin");
@@ -23,7 +34,7 @@ function roomFor(env: Env, documentId: string): DurableObjectStub {
   return env.DOCUMENT_ROOM.get(env.DOCUMENT_ROOM.idFromName(documentId.toLowerCase()));
 }
 
-export default {
+export default Sentry.withSentry(sentryOptions, {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
 
@@ -70,4 +81,4 @@ export default {
 
     return refused(404, "Not found");
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env>);

@@ -6,3 +6,6 @@ SYNC_INTERNAL_SECRET=change-me-local-only
 # Public keys that verify sync tokens, as a JWKS: {"keys":[...]}. From `pnpm keys:sync`.
 # The Worker never holds the private key, so it cannot mint tokens.
 SYNC_TOKEN_PUBLIC_KEYS=
+# Production only (wrangler secret put SENTRY_DSN --env production). Leave
+# unset locally: Sentry stays off.
+# SENTRY_DSN=

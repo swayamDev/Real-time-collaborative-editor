@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@brahma/protocol": "workspace:*",
+    "@sentry/cloudflare": "10.78.0",
     "jose": "6.2.14",
     "lib0": "0.2.120",
     "pg": "8.23.1",

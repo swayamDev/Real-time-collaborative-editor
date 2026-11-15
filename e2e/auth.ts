@@ -27,7 +27,7 @@ async function magicLink(email: string): Promise<string> {
 }
 
 /** A random private address, so no two sign-ins (even across runs) share one. */
-function clientAddress(): string {
+export function clientAddress(): string {
   const octet = () => Math.floor(Math.random() * 254) + 1;
   return `10.${octet()}.${octet()}.${octet()}`;
 }

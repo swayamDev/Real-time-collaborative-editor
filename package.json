@@ -25,6 +25,7 @@
   "dependencies": {
     "@brahma/protocol": "workspace:*",
     "@floating-ui/dom": "^1.8.0",
+    "@sentry/nextjs": "10.78.0",
     "@tiptap/core": "3.33.1",
     "@tiptap/extension-collaboration": "3.33.1",
     "@tiptap/extension-collaboration-caret": "3.33.1",

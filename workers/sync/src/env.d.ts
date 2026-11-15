@@ -9,6 +9,8 @@ declare namespace Cloudflare {
     SYNC_TOKEN_PUBLIC_KEYS: string;
     /** Seconds a socket may keep sending after its token expires (default 60). */
     TOKEN_GRACE_SECONDS?: string;
+    /** Production only: where Worker errors go (scrubbed). */
+    SENTRY_DSN?: string;
   }
 }
 
@@ -17,4 +19,5 @@ interface Env {
   SYNC_INTERNAL_SECRET: string;
   SYNC_TOKEN_PUBLIC_KEYS: string;
   TOKEN_GRACE_SECONDS?: string;
+  SENTRY_DSN?: string;
 }

@@ -11,6 +11,7 @@ import { SELF, env, evictDurableObject, runInDurableObject } from "cloudflare:te
 import { beforeEach, describe, expect, it } from "vitest";
 import { Awareness, encodeAwarenessUpdate } from "y-protocols/awareness";
 import * as Y from "yjs";
+import type { DocumentRoom } from "../src/room";
 import { memoryStore } from "../src/store";
 import { EDITOR, type TestUser, TestClient, newDocumentId } from "./client";
 
@@ -293,7 +294,7 @@ describe("snapshots to Postgres", () => {
     const savesBefore = memoryStore.saves;
 
     // The alarm fires early relative to the last write: it reschedules instead of saving.
-    await runInDurableObject(stubFor(id), (instance) => instance.alarm());
+    await runInDurableObject(stubFor(id), (instance) => (instance as unknown as DocumentRoom).alarm());
     expect(memoryStore.saves).toBe(savesBefore);
     expect((await alarmAt(id))! - Date.now()).toBeGreaterThan(500);
   });
@@ -311,7 +312,7 @@ describe("snapshots to Postgres", () => {
     await a.until(() => a.last("ack")!.count >= 3, "stored again");
     const savesBefore = memoryStore.saves;
 
-    await runInDurableObject(stubFor(id), (instance) => instance.alarm());
+    await runInDurableObject(stubFor(id), (instance) => (instance as unknown as DocumentRoom).alarm());
     expect(memoryStore.saves).toBe(savesBefore + 1);
   });
 
@@ -354,7 +355,7 @@ describe("snapshots to Postgres", () => {
     await a.until(() => a.last("ack")!.count >= 2, "stored");
     memoryStore.rows.delete(id);
 
-    await runInDurableObject(stubFor(id), (instance) => instance.alarm());
+    await runInDurableObject(stubFor(id), (instance) => (instance as unknown as DocumentRoom).alarm());
     await a.until(() => a.closed !== null, "closed");
     expect(a.closed?.code).toBe(4410);
     expect(await alarmAt(id)).toBeNull();
