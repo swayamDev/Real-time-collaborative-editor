@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { Awareness } from "y-protocols/awareness";
 import { base64ToBytes } from "@/lib/base64";
 import { AccessChannel } from "@/lib/collab/access-channel";
-import { getLocalStore } from "@/lib/collab/device-store";
+import { discardLocalCopy, getLocalStore, trackDocument } from "@/lib/collab/device-store";
 import { LocalDocument } from "@/lib/collab/local-document";
 import { selfPresence, syncOwnColor } from "@/lib/collab/presence";
 import { SyncProvider, type SyncStatus } from "@/lib/collab/provider";
@@ -57,16 +57,17 @@ export function useSyncSession(
     let cancelled = false;
     let teardown = () => {};
     void (async () => {
-      const store = await getLocalStore(user.id);
       if (clearFirst.current) {
         clearFirst.current = false;
-        await store?.deleteDocument(documentId).catch(() => {});
+        await discardLocalCopy(user.id, documentId);
       }
+      const store = await getLocalStore(user.id);
       const local = await LocalDocument.open(store, documentId, base64ToBytes(serverSnapshot));
       if (cancelled) {
         local.destroy();
         return;
       }
+      const untrack = trackDocument(local);
       const me = userRef.current;
       // Other tabs of this document on this device, online or not.
       const tabs = new TabChannel(documentId, local.doc);
@@ -103,6 +104,7 @@ export function useSyncSession(
         access.close();
         tabs.close();
         awareness.destroy();
+        untrack();
         local.destroy();
       };
       setSession({ local, provider: current, awareness });
@@ -133,17 +135,9 @@ export function useSyncSession(
     setGeneration((value) => value + 1);
   }, []);
 
-  const clearLocalCopy = useCallback(async () => {
-    const store = await getLocalStore(user.id);
-    if (!store) {
-      console.warn("No local store is open, so this device's copy of the document was not cleared.");
-      return;
-    }
-    // Reported, not thrown: the page still shows "Download a copy" either way.
-    await store.deleteDocument(documentId).catch((error: unknown) => {
-      console.warn("Could not clear this device's copy of the document", error);
-    });
-  }, [documentId, user.id]);
+  // The open document stops writing first, then its copy is deleted. The
+  // page keeps the Y.Doc in memory for "Download a copy".
+  const clearLocalCopy = useCallback(() => discardLocalCopy(user.id, documentId), [documentId, user.id]);
 
   return { session, rebuildAsViewer, clearLocalCopy };
 }

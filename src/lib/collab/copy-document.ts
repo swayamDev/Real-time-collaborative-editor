@@ -38,7 +38,8 @@ export function stateByClient(doc: Y.Doc): Uint8Array[] {
  */
 export async function moveLocalCopy(store: LocalStore, fromId: string, toId: string): Promise<void> {
   const { doc } = await loadLocalCopy(store, fromId);
+  // The new document is stored here for the first time: create its record.
+  await store.createDocument(toId, { title: doc.getText(TITLE_FIELD).toString(), lastOpenedAt: Date.now() });
   for (const update of stateByClient(doc)) await store.appendLocal(toId, update);
-  await store.updateMeta(toId, { title: doc.getText(TITLE_FIELD).toString(), lastOpenedAt: Date.now() });
   await store.deleteDocument(fromId);
 }

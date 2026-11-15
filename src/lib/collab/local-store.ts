@@ -1,7 +1,7 @@
 /**
  * Documents on this device, in IndexedDB.
  *
- * Database "brahma", version 1:
+ * Database "brahma:<user id>", version 1:
  *
  *   documents  { id, title, everSynced, lastOpenedAt, pendingCount, halted }
  *              Metadata for the sidebar and the offline document list.
@@ -14,6 +14,12 @@
  * A document's content is states + updates + pending, applied in that
  * order. Writes that hold edits use durability "strict", so a write that
  * completed survives a browser or operating system crash.
+ *
+ * A document exists on the device only while its `documents` record does.
+ * Only createDocument makes one; every other write checks for it in the same
+ * transaction and does nothing when it is missing. So a write that arrives
+ * after deleteDocument (a timer, a late acknowledgement, another tab) can
+ * never bring a deleted document back, not even partly.
  */
 
 export const DB_NAME = "brahma";
@@ -48,6 +54,18 @@ export interface LoadedDocument {
   base: Uint8Array[];
   /** Unacknowledged local edits, oldest first. */
   pending: PendingRow[];
+}
+
+/** The document has no record on this device (never stored, or deleted). */
+export class DocumentNotStoredError extends Error {
+  override name = "DocumentNotStoredError";
+}
+
+/** In development, say when a write found no record; in production it is silent. */
+function skipped(operation: string, docId: string): void {
+  if (process.env.NODE_ENV !== "production") {
+    console.warn(`Device store: ${operation} skipped, document ${docId} is not stored on this device.`);
+  }
 }
 
 /** The device is out of storage for this site. */
@@ -129,8 +147,24 @@ export class LocalStore {
     this.db.close();
   }
 
-  private async readMeta(store: IDBObjectStore, docId: string): Promise<DocumentMeta> {
-    return ((await request(store.get(docId))) as DocumentMeta | undefined) ?? emptyMeta(docId);
+  private async readMeta(store: IDBObjectStore, docId: string): Promise<DocumentMeta | null> {
+    return ((await request(store.get(docId))) as DocumentMeta | undefined) ?? null;
+  }
+
+  /**
+   * Store a document on this device: create its record with these fields,
+   * or, if another tab created it first, apply them to that record. The only
+   * write that creates a record.
+   */
+  async createDocument(docId: string, fields: Partial<Omit<DocumentMeta, "id" | "pendingCount">> = {}): Promise<DocumentMeta> {
+    const tx = this.db.transaction(["documents"], "readwrite");
+    const finished = done(tx);
+    const documents = tx.objectStore("documents");
+    const next = { ...((await this.readMeta(documents, docId)) ?? emptyMeta(docId)), ...fields, id: docId };
+    documents.put(next);
+    await finished;
+    this.announce(docId);
+    return next;
   }
 
   async loadDocument(docId: string): Promise<LoadedDocument> {
@@ -153,29 +187,40 @@ export class LocalStore {
     };
   }
 
-  /** Store a local edit as pending. Resolves with its sequence number once durable. */
+  /**
+   * Store a local edit as pending. Resolves with its sequence number once
+   * durable. Rejects with DocumentNotStoredError, writing nothing, when the
+   * document has no record.
+   */
   async appendLocal(docId: string, update: Uint8Array): Promise<number> {
     const tx = this.db.transaction(["pending", "documents"], "readwrite", STRICT);
     const finished = done(tx);
-    // Wrap requests in promises as they are made; a request that already
-    // succeeded will not fire its event again.
-    const seqPromise = request(
-      tx.objectStore("pending").add({ docId, update: standalone(update), bytes: update.byteLength }),
-    );
     const documents = tx.objectStore("documents");
     const meta = await this.readMeta(documents, docId);
+    if (!meta) {
+      tx.abort();
+      await finished.catch(() => {});
+      skipped("appendLocal", docId);
+      throw new DocumentNotStoredError(docId);
+    }
+    const seq = (await request(
+      tx.objectStore("pending").add({ docId, update: standalone(update), bytes: update.byteLength }),
+    )) as number;
     documents.put({ ...meta, pendingCount: meta.pendingCount + 1 });
-    const seq = (await seqPromise) as number;
     await finished;
     this.announce(docId);
     return seq;
   }
 
-  /** Store updates the server already has (remote edits). */
+  /** Store updates the server already has (remote edits). Nothing when the document has no record. */
   async appendRemote(docId: string, update: Uint8Array): Promise<void> {
-    const tx = this.db.transaction(["updates"], "readwrite", STRICT);
+    const tx = this.db.transaction(["documents", "updates"], "readwrite", STRICT);
     const finished = done(tx);
-    tx.objectStore("updates").add({ docId, update: standalone(update) });
+    if (await this.readMeta(tx.objectStore("documents"), docId)) {
+      tx.objectStore("updates").add({ docId, update: standalone(update) });
+    } else {
+      skipped("appendRemote", docId);
+    }
     await finished;
   }
 
@@ -195,6 +240,13 @@ export class LocalStore {
     if (seqs.length === 0) return;
     const tx = this.db.transaction(["pending", "updates", "documents"], "readwrite", STRICT);
     const finished = done(tx);
+    const documents = tx.objectStore("documents");
+    const meta = await this.readMeta(documents, docId);
+    if (!meta) {
+      await finished;
+      skipped("acknowledge", docId);
+      return;
+    }
     const pending = tx.objectStore("pending");
     const updates = tx.objectStore("updates");
     let moved = 0;
@@ -206,8 +258,6 @@ export class LocalStore {
       pending.delete(seq);
       moved += 1;
     }
-    const documents = tx.objectStore("documents");
-    const meta = await this.readMeta(documents, docId);
     documents.put({ ...meta, pendingCount: Math.max(0, meta.pendingCount - moved) });
     await finished;
     this.announce(docId);
@@ -230,8 +280,13 @@ export class LocalStore {
    * touched; they still have to reach the server.
    */
   async compact(docId: string, merge: (updates: Uint8Array[]) => Uint8Array): Promise<void> {
-    const tx = this.db.transaction(["states", "updates"], "readwrite", STRICT);
+    const tx = this.db.transaction(["documents", "states", "updates"], "readwrite", STRICT);
     const finished = done(tx);
+    if (!(await this.readMeta(tx.objectStore("documents"), docId))) {
+      await finished;
+      skipped("compact", docId);
+      return;
+    }
     const states = tx.objectStore("states");
     const updates = tx.objectStore("updates");
     const [state, rows] = await Promise.all([
@@ -262,11 +317,21 @@ export class LocalStore {
     return meta ?? null;
   }
 
-  async updateMeta(docId: string, patch: Partial<Omit<DocumentMeta, "id" | "pendingCount">>): Promise<DocumentMeta> {
+  /**
+   * Change fields of a stored document. Never creates one: when the record
+   * is missing (never stored, or deleted) this writes nothing and returns null.
+   */
+  async updateMeta(docId: string, patch: Partial<Omit<DocumentMeta, "id" | "pendingCount">>): Promise<DocumentMeta | null> {
     const tx = this.db.transaction(["documents"], "readwrite");
     const finished = done(tx);
     const documents = tx.objectStore("documents");
-    const next = { ...(await this.readMeta(documents, docId)), ...patch, id: docId };
+    const meta = await this.readMeta(documents, docId);
+    if (!meta) {
+      await finished;
+      skipped("updateMeta", docId);
+      return null;
+    }
+    const next = { ...meta, ...patch, id: docId };
     documents.put(next);
     await finished;
     this.announce(docId);

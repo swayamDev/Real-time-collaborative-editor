@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createDocumentCopyAction } from "@/app/actions";
 import { loadLocalCopy, moveLocalCopy } from "@/lib/collab/copy-document";
-import { getLocalStore } from "@/lib/collab/device-store";
+import { discardLocalCopy, disposeDocuments, getLocalStore } from "@/lib/collab/device-store";
 import { DELETED_WHILE_OFFLINE, SAVE_COPY_FAILED } from "@/lib/copy";
 import { useDocuments, useShell } from "../app-shell";
 import { DocumentGone } from "./document-gone";
@@ -37,7 +37,7 @@ export function DeletedDocument({ id, reason }: { id: string; reason: "deleted" 
       if (pendingCount > 0) {
         setState("offer");
       } else {
-        await store.deleteDocument(id).catch(() => {});
+        await discardLocalCopy(user.id, id);
         if (!cancelled) setState("gone");
       }
     })();
@@ -55,6 +55,8 @@ export function DeletedDocument({ id, reason }: { id: string; reason: "deleted" 
     try {
       const store = await getLocalStore(user.id);
       if (!store) throw new Error("No device store");
+      // The open document stops writing, so the copy read below is final.
+      await disposeDocuments(id);
       const { doc } = await loadLocalCopy(store, id);
       const result = await createDocumentCopyAction(doc.getText("title").toString());
       if (!result.ok) {
@@ -73,8 +75,7 @@ export function DeletedDocument({ id, reason }: { id: string; reason: "deleted" 
 
   const discard = async () => {
     setBusy(true);
-    const store = await getLocalStore(user.id);
-    await store?.deleteDocument(id).catch(() => {});
+    await discardLocalCopy(user.id, id);
     setBusy(false);
     setState("gone");
   };

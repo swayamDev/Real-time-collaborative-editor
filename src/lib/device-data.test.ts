@@ -44,6 +44,7 @@ async function names(factory: IDBFactory): Promise<string[]> {
 async function seed(factory: IDBFactory, ...databases: string[]): Promise<void> {
   for (const name of databases) {
     const store = await LocalStore.open(factory, name);
+    await store.createDocument("doc");
     await store.appendLocal("doc", new Uint8Array([1, 2, 3]));
     store.close();
   }

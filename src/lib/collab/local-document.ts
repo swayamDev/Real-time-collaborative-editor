@@ -13,6 +13,8 @@ export const REMOTE_ORIGIN = Symbol("remote");
 /** Compact the acknowledged updates once there are this many rows. */
 export const COMPACT_AFTER_ROWS = 200;
 const REMOTE_BATCH_MS = 300;
+/** A title change is saved to the device's document list after this pause. */
+export const TITLE_SAVE_MS = 500;
 
 /** A local edit as the provider sees it. */
 export interface LocalEdit {
@@ -70,6 +72,8 @@ export class LocalDocument {
   private remoteTimer: ReturnType<typeof setTimeout> | null = null;
   private titleTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
+  /** Set by dispose(): this page writes nothing more for this document. */
+  private disposed = false;
   storageFull = false;
   /** Local edits on this device the server has not acknowledged (all tabs, as of the last count). */
   pendingCount = 0;
@@ -93,11 +97,15 @@ export class LocalDocument {
       for (const row of loaded.pending) Y.applyUpdate(local.doc, row.update);
       if (serverSnapshot.byteLength > 0) Y.applyUpdate(local.doc, serverSnapshot);
     }, LOAD_ORIGIN);
-    // First time on this device: keep the snapshot so the document opens offline.
-    if (store && loaded.base.length === 0 && serverSnapshot.byteLength > 2) {
-      await store.appendRemote(docId, serverSnapshot).catch(() => {});
+    if (store) {
+      // Opening is when a document is first stored on this device, so this
+      // is the one place that creates its record (see LocalStore).
+      local.meta = await store.createDocument(docId, { lastOpenedAt: Date.now() }).catch(() => local.meta);
+      // First time on this device: keep the snapshot so the document opens offline.
+      if (loaded.base.length === 0 && serverSnapshot.byteLength > 2) {
+        await store.appendRemote(docId, serverSnapshot).catch(() => {});
+      }
     }
-    if (store) await store.updateMeta(docId, { lastOpenedAt: Date.now() }).catch(() => {});
     local.doc.on("update", local.onUpdate);
     local.doc.getText(TITLE_FIELD).observe(local.onTitle);
     return local;
@@ -133,9 +141,14 @@ export class LocalDocument {
     return () => this.changeListeners.delete(listener);
   }
 
+  /** The store, while this page may still write to it for this document. */
+  private get writable(): LocalStore | null {
+    return this.disposed ? null : this.store;
+  }
+
   /** Everything not yet acknowledged, oldest first: stored rows, then memory-only edits. */
   async pendingEntries(): Promise<PendingEntry[]> {
-    const rows = this.store ? await this.store.listPending(this.docId) : [];
+    const rows = this.writable ? await this.writable.listPending(this.docId) : [];
     return [
       ...rows.map((row) => ({ update: row.update, seq: row.seq, edit: null })),
       ...this.memoryOnly.map((edit) => ({ update: edit.update, seq: null, edit })),
@@ -154,36 +167,39 @@ export class LocalDocument {
         if (index !== -1) this.memoryOnly.splice(index, 1);
       }
     }
-    if (this.store && seqs.length > 0) await this.store.acknowledge(this.docId, seqs).catch(() => {});
+    const store = this.writable;
+    if (store && seqs.length > 0) await store.acknowledge(this.docId, seqs).catch(() => {});
     await this.recount();
   }
 
   /** Re-read how many local edits are still waiting for the server. */
   async recount(): Promise<void> {
-    const stored = this.store ? (await this.store.listPending(this.docId).catch(() => [])).length : 0;
+    const stored = this.writable ? (await this.writable.listPending(this.docId).catch(() => [])).length : 0;
     this.pendingCount = stored + this.memoryOnly.length;
     this.emitChange();
   }
 
   async markSynced(): Promise<void> {
-    if (!this.store || this.meta?.everSynced) return;
-    this.meta = await this.store
-      .updateMeta(this.docId, { everSynced: true, title: this.doc.getText(TITLE_FIELD).toString() })
-      .catch(() => this.meta);
+    const store = this.writable;
+    if (!store || this.meta?.everSynced) return;
+    const fields = { everSynced: true, title: this.doc.getText(TITLE_FIELD).toString() };
+    this.meta = (await store.updateMeta(this.docId, fields).catch(() => null)) ?? this.meta;
     this.emitChange();
   }
 
   async setHalted(halted: boolean): Promise<void> {
-    if (this.store) this.meta = await this.store.updateMeta(this.docId, { halted }).catch(() => this.meta);
+    const store = this.writable;
+    if (store) this.meta = (await store.updateMeta(this.docId, { halted }).catch(() => null)) ?? this.meta;
     this.emitChange();
   }
 
   /** Fold acknowledged updates into one snapshot once there are many. Call under the flush lock. */
   async compactIfNeeded(): Promise<void> {
-    if (!this.store) return;
+    const store = this.writable;
+    if (!store) return;
     await this.flushRemote();
-    if ((await this.store.updateCount(this.docId)) >= COMPACT_AFTER_ROWS) {
-      await this.store.compact(this.docId, mergeToState);
+    if ((await store.updateCount(this.docId)) >= COMPACT_AFTER_ROWS) {
+      await store.compact(this.docId, mergeToState);
     }
   }
 
@@ -193,10 +209,31 @@ export class LocalDocument {
     this.remoteTimer = null;
     const batch = this.remoteBatch;
     this.remoteBatch = [];
-    if (!this.store || batch.length === 0) return;
-    await this.store.appendRemote(this.docId, Y.mergeUpdates(batch)).catch(() => {});
+    const store = this.writable;
+    if (!store || batch.length === 0) return;
+    await store.appendRemote(this.docId, Y.mergeUpdates(batch)).catch(() => {});
   }
 
+  /**
+   * Stop writing this document to the device, for good, before its local
+   * copy is deleted (access removed, deleted on the server, sign-out). The
+   * title save and batched remote updates are dropped, and later edits,
+   * acknowledgements and compactions write nothing. The Y.Doc stays usable
+   * in memory, so the page can still offer a download. Resolves once local
+   * edits already being written have settled, so the store is final.
+   */
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.titleTimer) clearTimeout(this.titleTimer);
+    if (this.remoteTimer) clearTimeout(this.remoteTimer);
+    this.titleTimer = null;
+    this.remoteTimer = null;
+    this.remoteBatch = [];
+    await Promise.all([...this.unwritten].map((edit) => edit.seq));
+  }
+
+  /** The page is done with this document (unmount): write what is batched, then stop listening. */
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -209,6 +246,7 @@ export class LocalDocument {
   private onUpdate = (update: Uint8Array, origin: unknown): void => {
     if (origin === LOAD_ORIGIN || origin === TAB_ORIGIN) return;
     if (origin === REMOTE_ORIGIN) {
+      if (this.disposed) return;
       this.remoteBatch.push(update);
       this.remoteTimer ??= setTimeout(() => void this.flushRemote(), REMOTE_BATCH_MS);
       return;
@@ -220,9 +258,12 @@ export class LocalDocument {
     requestPersistentStorage();
     const edit: LocalEdit = { update, createdAt: Date.now(), seq: Promise.resolve(null) };
     this.pendingCount += 1;
-    if (this.store && !this.storageFull) {
+    const store = this.writable;
+    if (store && !this.storageFull) {
       this.unwritten.add(edit);
-      edit.seq = this.store.appendLocal(this.docId, update).then(
+      // Rejects without writing if the document is no longer stored (deleted
+      // by another tab): the edit then stays in memory, like a full disk.
+      edit.seq = store.appendLocal(this.docId, update).then(
         (seq) => {
           this.unwritten.delete(edit);
           this.emitChange();
@@ -244,11 +285,13 @@ export class LocalDocument {
   }
 
   private onTitle = (): void => {
-    if (!this.store) return;
+    if (!this.writable) return;
     if (this.titleTimer) clearTimeout(this.titleTimer);
     this.titleTimer = setTimeout(() => {
-      void this.store!.updateMeta(this.docId, { title: this.doc.getText(TITLE_FIELD).toString() }).catch(() => {});
-    }, 500);
+      this.titleTimer = null;
+      const store = this.writable;
+      if (store) void store.updateMeta(this.docId, { title: this.doc.getText(TITLE_FIELD).toString() }).catch(() => {});
+    }, TITLE_SAVE_MS);
   };
 
   private emitChange(): void {

@@ -1,7 +1,7 @@
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { LocalStore, StorageFullError, toStorageError } from "./local-store";
+import { DocumentNotStoredError, LocalStore, StorageFullError, toStorageError } from "./local-store";
 
 let store: LocalStore;
 
@@ -39,6 +39,7 @@ describe("LocalStore", () => {
   });
 
   it("keeps local edits pending, in order, and counts them", async () => {
+    await store.createDocument("a");
     const doc = new Y.Doc();
     const first = await store.appendLocal("a", edit(doc, "one "));
     const second = await store.appendLocal("a", edit(doc, "two"));
@@ -51,6 +52,7 @@ describe("LocalStore", () => {
   });
 
   it("moves acknowledged edits out of pending without losing them", async () => {
+    await store.createDocument("a");
     const doc = new Y.Doc();
     const first = await store.appendLocal("a", edit(doc, "kept "));
     await store.appendLocal("a", edit(doc, "still pending"));
@@ -63,6 +65,7 @@ describe("LocalStore", () => {
   });
 
   it("acknowledging twice (two tabs) is harmless", async () => {
+    await store.createDocument("a");
     const doc = new Y.Doc();
     const seq = await store.appendLocal("a", edit(doc, "once"));
     await Promise.all([store.acknowledge("a", [seq]), store.acknowledge("a", [seq])]);
@@ -72,6 +75,8 @@ describe("LocalStore", () => {
   });
 
   it("keeps documents apart", async () => {
+    await store.createDocument("a");
+    await store.createDocument("b");
     await store.appendLocal("a", edit(new Y.Doc(), "in a"));
     await store.appendLocal("b", edit(new Y.Doc(), "in b"));
     expect(await contentOf("a")).toBe("in a");
@@ -79,6 +84,7 @@ describe("LocalStore", () => {
   });
 
   it("compacts acknowledged updates into one snapshot and leaves pending alone", async () => {
+    await store.createDocument("x");
     const doc = new Y.Doc();
     for (const word of ["a ", "b ", "c "]) await store.appendRemote("x", edit(doc, word));
     await store.appendLocal("x", edit(doc, "pending"));
@@ -92,6 +98,7 @@ describe("LocalStore", () => {
   });
 
   it("never loses an update written while compaction runs", async () => {
+    await store.createDocument("x");
     const doc = new Y.Doc();
     for (const word of ["1 ", "2 ", "3 "]) await store.appendRemote("x", edit(doc, word));
     const late = edit(doc, "late");
@@ -100,7 +107,7 @@ describe("LocalStore", () => {
   });
 
   it("stores and lists metadata", async () => {
-    await store.updateMeta("a", { title: "Plans", everSynced: true, lastOpenedAt: 5 });
+    await store.createDocument("a", { title: "Plans", everSynced: true, lastOpenedAt: 5 });
     await store.appendLocal("a", edit(new Y.Doc(), "x"));
     expect(await store.getMeta("a")).toEqual({
       id: "a",
@@ -114,6 +121,8 @@ describe("LocalStore", () => {
   });
 
   it("deletes everything for one document", async () => {
+    await store.createDocument("a");
+    await store.createDocument("b");
     const doc = new Y.Doc();
     await store.appendRemote("a", edit(doc, "r"));
     await store.appendLocal("a", edit(doc, "p"));
@@ -122,6 +131,37 @@ describe("LocalStore", () => {
     await store.deleteDocument("a");
     expect(await store.loadDocument("a")).toEqual({ meta: null, base: [], pending: [] });
     expect(await contentOf("b")).toBe("other");
+  });
+
+  it("creates a record only through createDocument, which keeps another tab's fields", async () => {
+    expect(await store.updateMeta("new", { title: "Plans" })).toBeNull();
+    expect(await store.getMeta("new")).toBeNull();
+
+    await store.createDocument("new", { title: "Plans" });
+    await store.appendLocal("new", edit(new Y.Doc(), "x"));
+    // Created again (another tab opening it): fields apply, the count stays.
+    await store.createDocument("new", { lastOpenedAt: 7 });
+    expect(await store.getMeta("new")).toMatchObject({ title: "Plans", lastOpenedAt: 7, pendingCount: 1 });
+  });
+
+  it("refuses every write to a deleted document, so nothing can bring it back", async () => {
+    const doc = new Y.Doc();
+    await store.createDocument("a", { title: "Plans" });
+    await store.appendRemote("a", edit(doc, "acked "));
+    const seq = await store.appendLocal("a", edit(doc, "pending"));
+    await store.deleteDocument("a");
+
+    // Each late writer: title or flag change, local edit, remote batch,
+    // acknowledgement, compaction.
+    expect(await store.updateMeta("a", { title: "Late title" })).toBeNull();
+    await expect(store.appendLocal("a", edit(doc, " late edit"))).rejects.toBeInstanceOf(DocumentNotStoredError);
+    await store.appendRemote("a", edit(doc, " late remote"));
+    await store.acknowledge("a", [seq]);
+    await store.compact("a", merge);
+
+    expect(await store.loadDocument("a")).toEqual({ meta: null, base: [], pending: [] });
+    expect(await store.updateCount("a")).toBe(0);
+    expect(await store.listDocuments()).toEqual([]);
   });
 
   it("reports a full device as StorageFullError", () => {

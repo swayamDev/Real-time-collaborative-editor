@@ -30,6 +30,7 @@ describe("moveLocalCopy", () => {
     const doc = new Y.Doc();
     doc.getText("title").insert(0, "Offline notes");
     doc.getText("body").insert(0, "written offline");
+    await store.createDocument("old");
     await store.appendRemote("old", Y.encodeStateAsUpdate(doc));
     const before = Y.encodeStateVector(doc);
     doc.getText("body").insert(15, " and more");
