@@ -50,7 +50,7 @@ export class MemorySnapshotStore implements SnapshotStore {
 
 export const memoryStore = new MemorySnapshotStore();
 
-export function createSnapshotStore(env: Env): SnapshotStore {
+export function createSnapshotStore(env: { DATABASE_URL: string }): SnapshotStore {
   if (env.DATABASE_URL.startsWith("memory:")) return memoryStore;
   return new PostgresSnapshotStore(env.DATABASE_URL);
 }

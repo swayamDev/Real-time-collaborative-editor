@@ -240,10 +240,10 @@ The title in the column is cleaned the same way Phase 1 validated it. If the wri
 
 <a id="delete"></a>**Delete.** Deleting happens in an order where any failure leaves a consistent state:
 
-1. Write a tombstone (`deleted_at`) on the row. From that commit the document is deleted for the list, the page, the sync server and clients returning from offline.
+1. Write a tombstone (`deleted_at`) on the row and, in the same statement, erase its content (`title` becomes empty and `yjs_state` the empty document). From that commit the document is deleted for the list, the page, the sync server and clients returning from offline, and its text is gone from the database. The sync server only writes rows with no tombstone, so nothing writes the content back (an integration test runs its Postgres store against a deleted row).
 2. Ask the Durable Object to close every socket with `4410` and erase itself (`deleteAlarm()`, `deleteAll()`). This is best effort: a room that loads a tombstoned row, a room that sees the tombstone on its first connection, and a snapshot that finds no live row all erase the room.
 
-So delete works even while the sync server is down, and a document is never half deleted or unreachable. Tombstones are kept until accounts bring a purge policy, so a device returning from months offline still learns what happened.
+So delete works even while the sync server is down, and a document is never half deleted or unreachable. The tombstoned row is kept, with only its id, owner, timestamps and `deleted_at`, so a device returning from months offline still learns what happened. The content survives only in database backups (see Backups and rollback).
 
 **Durable Object limits.** On the Workers Free plan, SQLite-backed Durable Objects allow 100,000 rows written per day across the account, and every `setAlarm()` and delete counts as a row written ([pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/), [limits](https://developers.cloudflare.com/durable-objects/platform/limits/)). Two choices keep Brahma inside that:
 
@@ -374,6 +374,12 @@ A client can send any `X-Forwarded-For`, and `next start` keeps it, so no client
 
 Any editor can send raw Yjs data that never went through the editor. Links may only point to http, https or mailto, wherever they are rendered, in the editor and in "Download a copy", whose HTML escapes all text and attributes. Content the schema cannot hold (an unknown node or mark) is removed by editors' clients and editing goes on; a viewer's editor works on a one-way copy, so nothing it removes is ever written. Tests send such content from a raw client and check that nothing runs or breaks in other people's browsers.
 
+### Privacy policy
+
+[/privacy](src/app/(public)/privacy/page.tsx) states, in plain language, what the app stores, where, who else handles it, the cookies, and how to have data deleted. Google requires its URL to publish the OAuth app. It is public: the request proxy lets it through without a session ([proxy.ts](src/proxy.ts)), and the service worker never keeps it in a user's page cache (`PUBLIC_PAGES` in [sw/cache-policy.mjs](sw/cache-policy.mjs)). A Playwright test checks both.
+
+It must match the code. Update the page, and its "Last updated" date, when any of these change: the user, session, account, document, invite or share link tables; the providers (Neon, Vercel, Cloudflare, Resend, Sentry, Google) or their regions; the session length; the cookies or browser storage; the backup policy; what the Sentry scrubber removes. Contact goes through GitHub issues, never a personal email address.
+
 ### Security headers
 
 Every response carries a Content Security Policy with `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'` and `object-src 'none'`; `X-Frame-Options: DENY`; `Referrer-Policy: same-origin` (document and share-link URLs carry ids and tokens); `X-Content-Type-Options: nosniff`; `Cross-Origin-Opener-Policy: same-origin`; a Permissions-Policy that turns off camera, microphone, location and payments; and HSTS when the app's URL is https.
@@ -454,7 +460,7 @@ documents
   yjs_state    bytea              snapshot of the document's Yjs state, written by the sync server
   created_at   timestamptz
   updated_at   timestamptz        drives "sorted by last edit" (partial index on live rows)
-  deleted_at   timestamptz        tombstone; set first when a document is deleted
+  deleted_at   timestamptz        tombstone; set when a document is deleted, with title and yjs_state erased
 ```
 
 **Why Yjs state was stored from day one.** Phase 1 already kept the body in a `Y.Doc` and stored its binary state, not HTML or ProseMirror JSON. Phase 2 changed the transport (HTTP saves became a WebSocket to a Durable Object) without converting a single document: a room loads the stored bytes as they are.
@@ -642,11 +648,11 @@ Do these by hand, in order:
 2. **Accounts:** Vercel (Hobby), Cloudflare (Workers Free), Neon (Free), Resend (Free), Sentry (Developer), a Google Cloud project.
 3. **Neon:** create the project in **AWS Singapore (`aws-ap-southeast-1`)**. Copy the pooled and the direct connection strings and the project ID. Create an API key for the deploy backups (project-scoped if your account offers it).
 4. **Secrets, on your machine:** `pnpm keys:sync --production`, and `openssl rand -base64 32` twice (`BETTER_AUTH_SECRET`, `SYNC_INTERNAL_SECRET`). Keep them in a password manager only.
-5. **Sentry:** create one project for the app and one for the Worker (or one for both). Copy the DSNs.
+5. **Sentry:** create one project for the app and one for the Worker (or one for both). Copy the DSNs. In each project's security and privacy settings, turn on **Prevent storing of IP addresses**, as the privacy policy says (the SDK already sends none).
 6. **Cloudflare:** `pnpm --filter @brahma/sync exec wrangler login`; set the four Worker secrets with `--env production`; note your `workers.dev` subdomain; create an API token for GitHub with Workers edit permission only.
 7. **Resend:** confirm in the dashboard that your plan allows another domain (Resend's free plan allows three since August 2026); add `editor.swayam.space`; create the DNS records it shows (they sit under `send.editor.swayam.space` and `resend._domainkey.editor.swayam.space`, so they do not conflict with the app's CNAME) at your DNS host; wait for verification; create a sending-only API key limited to that domain.
 8. **Google Cloud:**
-   - OAuth consent screen: External; app name Brahma; a support email; authorized domain `swayam.space`; scopes `openid`, `email` and `profile` only; publish to **In production**. These are non-sensitive scopes, so no review is needed ([Google](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification)).
+   - OAuth consent screen: External; app name Brahma; a support email; privacy policy `https://editor.swayam.space/privacy`; application home page `https://editor.swayam.space`; authorized domain `swayam.space`; scopes `openid`, `email` and `profile` only; publish to **In production**. These are non-sensitive scopes, so no review is needed ([Google](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification)).
    - OAuth client (Web application): authorized JavaScript origin `https://editor.swayam.space`, authorized redirect URI `https://editor.swayam.space/api/auth/callback/google`.
 9. **Vercel:** import the repository; set the Production variables above (Preview and Development empty); add the domain `editor.swayam.space`.
 10. **DNS:** at your DNS host, create the `editor` CNAME record Vercel shows. Wait for Vercel's certificate.
@@ -672,6 +678,7 @@ Run against production after the first deploy and after any risky change:
 9. **Remove access:** their open tab shows "You no longer have access to this document."
 10. **Sign out** on the phone: in its developer tools, no `brahma:*` IndexedDB databases and no `brahma-pages` caches remain, and `/` goes to sign-in.
 11. **Headers:** `curl -sI https://editor.swayam.space/sign-in` shows the Content-Security-Policy, X-Frame-Options and Strict-Transport-Security headers.
+12. **Privacy policy:** in a private window, https://editor.swayam.space/privacy opens without signing in, and the sign-in page links to it.
 
 ## Next
 
@@ -679,7 +686,8 @@ Agreed out of scope for Phase 4:
 
 - **Transferring ownership** to another member.
 - **A full script Content Security Policy** with per-request nonces.
-- **Restoring deleted documents** (tombstones are kept, so this is possible later).
+- **Restoring deleted documents.** Deleting erases the content, so this would need a soft-delete period first.
+- **Deleting an account** from the app. For now it is done by hand, on request (see the privacy policy).
 - **Audit logs** of who changed access, and when.
 
 ## Project layout

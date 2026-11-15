@@ -1,11 +1,15 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { type NextRequest, NextResponse } from "next/server";
 
+/** Pages anyone can open without signing in (keep in step with PUBLIC_PAGES in sw/cache-policy.mjs). */
+const PUBLIC_PATHS = ["/privacy"];
+
 /**
  * Send visitors without a session cookie to sign in. This is only a fast
  * first gate: pages, actions and routes all verify the session themselves.
  */
 export function proxy(request: NextRequest) {
+  if (PUBLIC_PATHS.includes(request.nextUrl.pathname)) return NextResponse.next();
   if (getSessionCookie(request)) return NextResponse.next();
   const url = request.nextUrl.clone();
   url.pathname = "/sign-in";

@@ -1,7 +1,10 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as Y from "yjs";
+import { PostgresSnapshotStore } from "../../workers/sync/src/store";
 import { db } from "@/db/client";
 import { documents } from "@/db/schema";
+import { emptyYjsState } from "@/lib/empty-yjs-state";
 import { getAccess } from "@/server/authz";
 import { NOT_ALLOWED, NO_SUCH_DOCUMENT, SIGN_IN_REQUIRED } from "@/server/guards";
 import { type World, as, makeWorld } from "./fixtures";
@@ -81,6 +84,41 @@ describe("deleteDocumentAction", () => {
     expect(await deleteDocumentAction(world.documentId)).toEqual({ ok: true, value: undefined });
     expect(await isDeleted(world.documentId)).toBe(true);
     expect(syncCalls.map((call) => call.call)).toEqual(["delete"]);
+  });
+
+  it("erases the title and content with the tombstone, keeping only what says it was deleted", async () => {
+    const content = new Y.Doc();
+    content.getText("title").insert(0, "Salary review");
+    content.getText("body").insert(0, "Private notes");
+    await db()
+      .update(documents)
+      .set({ title: "Salary review", yjsState: Y.encodeStateAsUpdate(content) })
+      .where(eq(documents.id, world.documentId));
+
+    as(world.owner);
+    expect(await deleteDocumentAction(world.documentId)).toEqual({ ok: true, value: undefined });
+
+    const [row] = await db().select().from(documents).where(eq(documents.id, world.documentId));
+    expect(row.title).toBe("");
+    expect(new Uint8Array(row.yjsState)).toEqual(emptyYjsState());
+    expect(row.ownerId).toBe(world.owner.id);
+    expect(row.deletedAt).not.toBeNull();
+  });
+
+  it("the sync server's snapshot store never writes content back to a deleted document", async () => {
+    as(world.owner);
+    await deleteDocumentAction(world.documentId);
+    const store = new PostgresSnapshotStore(process.env.DATABASE_URL!);
+
+    const late = new Y.Doc();
+    late.getText("body").insert(0, "Written after the delete");
+    const saved = await store.save(world.documentId, { state: Y.encodeStateAsUpdate(late), title: "Late title" });
+
+    expect(saved).toBe(false);
+    expect(await store.load(world.documentId)).toEqual({ deleted: true });
+    const [row] = await db().select().from(documents).where(eq(documents.id, world.documentId));
+    expect(row.title).toBe("");
+    expect(new Uint8Array(row.yjsState)).toEqual(emptyYjsState());
   });
 
   it("gives nobody access to a deleted document, owner included", async () => {

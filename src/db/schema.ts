@@ -49,8 +49,9 @@ export const documents = pgTable(
     /**
      * Tombstone. Set first when a document is deleted, so every reader (the
      * list, the page, the sync server, clients returning from offline) sees
-     * the deletion even if a later cleanup step fails. Kept until accounts
-     * arrive with a purge policy.
+     * the deletion even if a later cleanup step fails. The same update
+     * empties title and yjs_state, so a deleted document keeps no content;
+     * the sync server never writes to a tombstoned row.
      */
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },

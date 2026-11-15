@@ -150,5 +150,6 @@ self.addEventListener("fetch", (event) => {
   // RSC payloads are not cached: offline they fail, and Next falls back to
   // a full page load, which the page cache serves.
   if (isRscRequest(request, url) || url.pathname.startsWith("/api/")) return;
-  if (request.mode === "navigate") event.respondWith(pageNetworkFirst(request, url));
+  // Public pages are the same for everyone: the browser fetches them as usual.
+  if (request.mode === "navigate" && !isPublicPage(url.pathname)) event.respondWith(pageNetworkFirst(request, url));
 });

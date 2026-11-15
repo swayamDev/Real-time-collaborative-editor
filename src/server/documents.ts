@@ -77,14 +77,18 @@ export async function createDocument(ownerId: string, title = ""): Promise<Docum
 }
 
 /**
- * Step one of a delete: write the tombstone. From this commit on the
- * document is deleted for every reader. Returns false if it did not exist
- * or was already deleted.
+ * Step one of a delete: write the tombstone and erase the content in the
+ * same statement. From this commit on the document is deleted for every
+ * reader, and its title and text are gone from the database (they remain
+ * only in backups, for their restore window). The row itself stays, with
+ * its id, owner and deleted_at, so clients returning from offline still
+ * learn that it was deleted. Returns false if it did not exist or was
+ * already deleted.
  */
 export async function tombstoneDocument(id: string): Promise<boolean> {
   const rows = await db()
     .update(documents)
-    .set({ deletedAt: sql`now()` })
+    .set({ deletedAt: sql`now()`, title: "", yjsState: emptyYjsState() })
     .where(and(eq(documents.id, id), isNull(documents.deletedAt)))
     .returning({ id: documents.id });
   return rows.length > 0;

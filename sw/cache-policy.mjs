@@ -8,6 +8,12 @@ export const USER_KEY = "/__brahma/user";
 /** Set at activation of a new version; cleared once pages are refreshed for a confirmed user. */
 export const REFRESH_KEY = "/__brahma/refresh-pending";
 export const OFFLINE_URL = "/offline";
+/** Pages anyone can open signed out. Never stored in a user's page cache: always from the network. */
+export const PUBLIC_PAGES = ["/privacy"];
+
+export function isPublicPage(pathname) {
+  return PUBLIC_PAGES.includes(pathname.replace(/\/+$/, "") || "/");
+}
 
 export function staticCacheName(version) {
   return `brahma-static-${version}`;
