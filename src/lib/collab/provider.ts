@@ -490,6 +490,20 @@ export class SyncProvider {
     this.updateStatus();
   }
 
+  /**
+   * Try again after a halt ("Try again" on the halted banner). A halt is
+   * never permanent on the device: the stored flag is cleared once a sync
+   * succeeds, and if the server refuses again, the document halts again.
+   */
+  retry(): void {
+    if (this.destroyed || this.terminal || !this.halted) return;
+    this.halted = false;
+    this.isolate = false;
+    this.attempts = 0;
+    this.updateStatus();
+    this.connect();
+  }
+
   private halt(): void {
     this.halted = true;
     void this.options.local.setHalted(true);
@@ -641,6 +655,8 @@ export class SyncProvider {
         await local.compactIfNeeded();
       });
       if (connection.closed) return;
+      // Everything queued reached the server: a halt stored earlier no longer applies.
+      if (local.halted) await local.setHalted(false);
       this.isolate = false;
       this.flushing = false;
       // Edits made during the flush that were not stored in time to be listed.

@@ -544,6 +544,45 @@ describe("close codes", () => {
     expect(tab.sockets).toHaveLength(1);
   });
 
+  it("a halt is never permanent: it survives a reload, Try again syncs, and success clears the stored flag", async () => {
+    const first = await openTab();
+    await until(() => first.provider.getStatus() === "saved", "saved");
+    first.sockets.at(-1)!.serverClose(1008);
+    await until(() => first.provider.getStatus() === "halted", "halted");
+    await until(async () => (await store.getMeta("doc"))?.halted === true, "halt stored");
+    // Typed while halted: stored on the device, never sent.
+    type(first.local, "kept on the device");
+    await until(async () => (await store.listPending("doc")).length === 1, "stored");
+    expect(server.text()).toBe("");
+    first.provider.destroy();
+    first.local.destroy();
+
+    // Reloaded: still halted, and it does not connect on its own.
+    const reloaded = await openTab();
+    expect(reloaded.provider.getStatus()).toBe("halted");
+    await tick(BACKOFF_MAX_MS * 2);
+    expect(reloaded.sockets).toHaveLength(0);
+
+    reloaded.provider.retry();
+    await until(() => reloaded.provider.getStatus() === "saved", "synced after Try again");
+    await until(() => server.text() === "kept on the device", "the edit reached the server");
+    expect((await store.getMeta("doc"))?.halted).toBe(false);
+    expect(reloaded.local.halted).toBe(false);
+  });
+
+  it("Try again halts again if the server still refuses, keeping the edits", async () => {
+    const tab = await openTab();
+    await until(() => tab.provider.getStatus() === "saved", "saved");
+    server.rejectIf = () => true;
+    type(tab.local, "refused");
+    await until(() => tab.provider.getStatus() === "halted", "halted");
+
+    tab.provider.retry();
+    await until(() => tab.provider.getStatus() === "halted" && tab.sockets.length >= 2, "halted again");
+    expect((await store.getMeta("doc"))?.halted).toBe(true);
+    expect((await store.listPending("doc")).length).toBeGreaterThan(0);
+  });
+
   it("1007 with nothing in flight halts with no retry", async () => {
     const tab = await openTab();
     await until(() => tab.provider.getStatus() === "saved", "saved");

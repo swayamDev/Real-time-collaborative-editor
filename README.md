@@ -161,11 +161,15 @@ Close codes, and what the client does with each ([close-policy.ts](src/lib/colla
 | `4426` | Bundle older than the document's schema | Updates and reloads ("Brahma was updated. Reloading.") |
 | `4427` | Bundle newer than the deployment accepts | Halts |
 | `1007`, `1009` | Malformed, or over 4 MiB | One retry sending queued edits one per message, then halts |
-| `1008` | Presence that does not match the signed-in user | Halts |
+| `1008` | Presence that does not match the signed-in user, or a client id another user's socket owns | Halts |
 | other `4xxx` | Unknown application code | Halts |
 | anything else | Network, restart | Reconnects with backoff |
 
 Only the offending socket closes; the room carries on.
+
+**A halt is never permanent.** The halted banner offers "Download a copy" and "Try again". Try again reconnects; once a sync gets every queued edit to the server, the halted flag stored on the device is cleared. If the server refuses again, the document halts again, with the edits still on the device. Signing out while halted warns first, since those edits would be deleted.
+
+**Connections that vanish without a close frame.** Airplane mode, or a mobile network that drops, leaves the room holding the old socket, with no close frame to say it is gone. When the same tab reconnects, it announces the same presence client id. If the socket that owns that id belongs to the same user, the room treats it as stale: it hands the id to the new socket, closes the old one with `1000`, and logs `socket_replaced`. Another user claiming the id is still refused with `1008`. Before this, the reconnect was refused with `1008` and the document halted, which Playwright's `setOffline` never showed because it closes sockets cleanly; [e2e/silent-drop.spec.ts](e2e/silent-drop.spec.ts) drops only the page's side of the socket instead.
 
 ```mermaid
 sequenceDiagram
@@ -326,7 +330,7 @@ The token travels in the subprotocol header, so it stays out of URLs and logs. T
 | Can receive a sync token, and with which role | The token route |
 | Token valid for this document | The Worker router, before any Durable Object exists |
 | Role on each socket, live | The DocumentRoom: viewers' writes are dropped and the socket closes with `4405` |
-| Presence is yours | The DocumentRoom: each presence entry must carry the socket's user id and a client id no other socket owns (else `1008`); name and avatar are replaced with the token's |
+| Presence is yours | The DocumentRoom: each presence entry must carry the socket's user id and a client id no other user's socket owns (else `1008`; the same user's older socket is retired as stale); name and avatar are replaced with the token's |
 | Read-only interface | The editor refuses typing, paste, drop, undo and the floating toolbar for viewers, and a viewer's editor works on a one-way copy of the document, so nothing it does can write. This is convenience; the room is the enforcement. |
 | Internal endpoints | Shared secret, compared in constant time |
 

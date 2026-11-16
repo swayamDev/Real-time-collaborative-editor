@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -30,6 +30,9 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
+  // Unique per dialog: several confirm dialogs can be on one page (sidebar, account menu).
+  const titleId = useId();
+  const descriptionId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -47,18 +50,18 @@ export function ConfirmDialog({
   return (
     <dialog
       ref={ref}
-      aria-labelledby="confirm-title"
-      aria-describedby="confirm-description"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
       onCancel={(event) => {
         event.preventDefault();
         if (!pending) onCancel();
       }}
       className="dialog-fade m-auto w-[min(26rem,calc(100vw-32px))] rounded-lg border border-hairline bg-raised p-5 text-ink shadow-float"
     >
-      <h2 id="confirm-title" className="text-[16px] leading-6 font-semibold break-words">
+      <h2 id={titleId} className="text-[16px] leading-6 font-semibold break-words">
         {title}
       </h2>
-      <p id="confirm-description" className="mt-1 text-ui text-ink-muted">
+      <p id={descriptionId} className="mt-1 text-ui text-ink-muted">
         {description}
       </p>
       {error && (

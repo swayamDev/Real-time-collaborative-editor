@@ -170,6 +170,30 @@ describe("presence bound to identity", () => {
     expect(attacker.closed?.code).toBe(1008);
     expect(victim.closed).toBeNull();
   });
+
+  it("lets the same user's reconnect take over a presence id from a socket that vanished without closing", async () => {
+    const id = seed();
+    const watcher = await joined(id, VIEWER);
+    // A phone in airplane mode: its socket is gone, but no close frame ever
+    // reached the room, so the room still holds it and its presence id.
+    const dropped = await joined(id);
+    const clientDoc = new Y.Doc();
+    dropped.send(encodeAwareness(presence(EDITOR.sub, "Ada", clientDoc)));
+    await watcher.until(() => watcher.count("awareness") > 0, "presence relayed");
+
+    // Back online, the same tab reconnects and announces the same client id.
+    const reconnected = await joined(id);
+    const before = watcher.count("awareness");
+    reconnected.send(encodeAwareness(presence(EDITOR.sub, "Ada", clientDoc)));
+
+    // The old socket is retired; the new one keeps working and its presence is relayed.
+    await dropped.until(() => dropped.closed !== null, "stale socket closed");
+    expect(dropped.closed?.code).toBe(1000);
+    await watcher.until(() => watcher.count("awareness") > before, "new presence relayed");
+    reconnected.edit((doc) => doc.getText("body").insert(0, "after the drop"));
+    await reconnected.until(() => reconnected.count("ack") > 0, "edit acknowledged");
+    expect(reconnected.closed).toBeNull();
+  });
 });
 
 describe("live access changes", () => {

@@ -288,6 +288,7 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, 
               label: "Download a copy",
               onClick: () => session && downloadCopy(documentCopy(session.local.doc)),
             }}
+            secondaryAction={{ label: "Try again", onClick: () => session?.provider.retry() }}
           />
         )}
         {storageFull && status !== "halted" && <DocumentBanner testId="storage-full" message={STORAGE_FULL} />}

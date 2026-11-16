@@ -244,13 +244,16 @@ export class DocumentRoom extends DurableObject<Env> {
       }
 
       case "awareness": {
-        const bound = this.bindAwareness(ws, attachment, message.update);
-        if (bound === "malformed") return this.reject(ws, CLOSE_MALFORMED, "Invalid awareness update");
-        if (bound === "spoofed") return this.reject(ws, CLOSE_POLICY, "Presence does not match the signed-in user");
+        const result = this.bindAwareness(ws, attachment, message.update);
+        if (result === "malformed") return this.reject(ws, CLOSE_MALFORMED, "Invalid awareness update");
+        if (result === "spoofed") return this.reject(ws, CLOSE_POLICY, "Presence does not match the signed-in user");
+        const { update: bound, takenOver } = result;
+        for (const [stale, clientIds] of takenOver) this.retireStaleSocket(stale, clientIds, ws);
         const change = this.awareness.apply(bound);
         change.present.forEach((id) => this.awarenessOwners.set(id, ws));
         change.removed.forEach((id) => this.awarenessOwners.delete(id));
         const ids = new Set(attachment.awarenessIds);
+        takenOver.forEach((clientIds) => clientIds.forEach((id) => ids.add(id)));
         change.present.forEach((id) => ids.add(id));
         change.removed.forEach((id) => ids.delete(id));
         attachment.awarenessIds = [...ids].slice(0, 32);
@@ -276,17 +279,32 @@ export class DocumentRoom extends DurableObject<Env> {
    * socket that first announced it, and every state must carry the socket
    * user id. Name and avatar are replaced with the token values, so nobody
    * can appear as someone else. Returns the rewritten update.
+   *
+   * One exception: the same user announcing a client id held by another of
+   * their sockets is that tab reconnecting after its old socket vanished
+   * without a close frame (airplane mode, a dropped mobile connection), which
+   * the room cannot otherwise notice. The old socket is stale: it is listed
+   * in `takenOver` and retired. Another user claiming the id is still refused.
    */
-  private bindAwareness(ws: WebSocket, attachment: Attachment, update: Uint8Array): Uint8Array | "malformed" | "spoofed" {
+  private bindAwareness(
+    ws: WebSocket,
+    attachment: Attachment,
+    update: Uint8Array,
+  ): { update: Uint8Array; takenOver: Map<WebSocket, number[]> } | "malformed" | "spoofed" {
     let entries;
     try {
       entries = decodeAwarenessUpdate(update);
     } catch {
       return "malformed";
     }
+    const takenOver = new Map<WebSocket, number[]>();
     for (const entry of entries) {
       const owner = this.awarenessOwners.get(entry.clientId);
-      if (owner && owner !== ws) return "spoofed";
+      if (owner && owner !== ws) {
+        const ownerAttachment = owner.deserializeAttachment() as Attachment | null;
+        if (ownerAttachment?.userId !== attachment.userId) return "spoofed";
+        takenOver.set(owner, [...(takenOver.get(owner) ?? []), entry.clientId]);
+      }
       if (entry.state === "null") continue;
       const state = JSON.parse(entry.state) as { user?: Record<string, unknown> } | null;
       if (typeof state !== "object" || state === null || typeof state.user !== "object" || state.user === null) {
@@ -296,7 +314,29 @@ export class DocumentRoom extends DurableObject<Env> {
       state.user = { ...state.user, id: attachment.userId, name: attachment.name, image: attachment.image };
       entry.state = JSON.stringify(state);
     }
-    return encodeAwarenessEntries(entries);
+    return { update: encodeAwarenessEntries(entries), takenOver };
+  }
+
+  /**
+   * Close a socket of the same user whose presence ids a newer socket just
+   * claimed. Those ids pass to the newer socket without a removal broadcast
+   * (a removal would bump their clock, and other clients would then ignore
+   * the reconnected tab's presence until its next renewal).
+   */
+  private retireStaleSocket(stale: WebSocket, clientIds: readonly number[], replacement: WebSocket): void {
+    const attachment = stale.deserializeAttachment() as Attachment | null;
+    if (attachment) {
+      attachment.awarenessIds = attachment.awarenessIds.filter((id) => !clientIds.includes(id));
+      stale.serializeAttachment(attachment);
+    }
+    clientIds.forEach((id) => this.awarenessOwners.set(id, replacement));
+    logEvent("socket_replaced", { reason: "Same user reconnected with the same presence id" });
+    this.removeSocket(stale);
+    try {
+      stale.close(1000, "Replaced by a newer connection");
+    } catch {
+      // Already gone.
+    }
   }
 
   /** Swap in a newer token for the same user and document, applying later access changes. */
