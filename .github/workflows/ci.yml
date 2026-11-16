@@ -88,8 +88,19 @@ jobs:
       - run: pnpm check:bundles
       # Playwright global setup starts the sync Worker with wrangler dev.
       - run: pnpm test:e2e
+      # A test that failed and passed on retry still leaves the job green.
+      # Its retry keeps a trace (playwright.config.ts) in a "-retry" folder,
+      # so upload the report then too, not only when the job fails.
+      - name: Check for retried tests
+        id: retries
+        if: always()
+        run: |
+          if compgen -G "test-results/*-retry*" > /dev/null; then
+            echo "retried=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Retried tests::Some tests failed and were retried; the report and traces are uploaded."
+          fi
       - uses: actions/upload-artifact@v7
-        if: failure()
+        if: failure() || steps.retries.outputs.retried == 'true'
         with:
           name: playwright-report
           path: |

@@ -18,7 +18,9 @@ export default defineConfig({
   globalTeardown: "./e2e/global-teardown.ts",
   use: {
     baseURL: `http://localhost:${PORT}`,
-    trace: "retain-on-failure",
+    // Keep the trace of every failed run and of every retry, so a test that
+    // fails once and passes on retry (a flake) still leaves both traces.
+    trace: "retain-on-failure-and-retries",
   },
   projects: [
     {
