@@ -43,6 +43,15 @@ describe("sync tokens", () => {
     const verified = await verifySyncToken(token, publicKeys, DOC);
     expect(verified).toMatchObject(claims);
     expect(verified.exp - verified.iat).toBe(TOKEN_TTL_SECONDS);
+    // A real user's token never carries the demo claim.
+    expect(verified.demo).toBeUndefined();
+  });
+
+  it("carries the demo claim only when it is exactly true", async () => {
+    const demo = await verifySyncToken(await signSyncToken({ ...claims, demo: true }, privateJwk), publicKeys, DOC);
+    expect(demo.demo).toBe(true);
+    const notDemo = await verifySyncToken(await signSyncToken({ ...claims, demo: false }, privateJwk), publicKeys, DOC);
+    expect(notDemo.demo).toBeUndefined();
   });
 
   it("rejects an expired token, beyond the clock tolerance", async () => {

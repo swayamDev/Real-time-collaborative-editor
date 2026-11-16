@@ -483,6 +483,8 @@ export class SyncProvider {
       case "not-found":
       case "session-ended":
       case "outdated":
+      case "seat-moved":
+      case "demo-limit":
         // Outdated: queued edits stay on the device; the page updates and reloads.
         this.stop(action);
         return;

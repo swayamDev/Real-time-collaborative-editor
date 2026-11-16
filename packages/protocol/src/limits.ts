@@ -31,6 +31,10 @@ export const CLOSE_INVALID_ID = 4400;
 export const CLOSE_UNAUTHENTICATED = 4401;
 /** Access to the document was removed. */
 export const CLOSE_ACCESS_REVOKED = 4403;
+/** Demo only: this seat (Visitor A or B) was taken by a newer connection, usually another device. */
+export const CLOSE_SEAT_MOVED = 4409;
+/** Demo only: the demo document reached its size or write limit. */
+export const CLOSE_DEMO_LIMIT = 4429;
 /** A viewer's socket sent a write. */
 export const CLOSE_READ_ONLY = 4405;
 export const CLOSE_NOT_FOUND = 4404;

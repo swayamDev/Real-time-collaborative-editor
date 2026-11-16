@@ -23,7 +23,17 @@
  * 10. saved                 connected, everything acknowledged
  */
 /** Why a provider stopped for good. */
-export type StopReason = "deleted" | "not-found" | "revoked" | "downgraded" | "session-ended" | "outdated";
+export type StopReason =
+  | "deleted"
+  | "not-found"
+  | "revoked"
+  | "downgraded"
+  | "session-ended"
+  | "outdated"
+  /** Demo: this seat moved to another connection (another device). */
+  | "seat-moved"
+  /** Demo: the demo document reached its limit. */
+  | "demo-limit";
 
 export type SyncStatus =
   | StopReason
@@ -77,6 +87,8 @@ export const STATUS_LABELS: Record<SyncStatus, string> = {
   downgraded: "",
   "session-ended": "Not syncing",
   outdated: "",
+  "seat-moved": "",
+  "demo-limit": "",
   halted: "",
   saving: "Saving",
   "saved-on-device": "Saved on this device",

@@ -1,6 +1,7 @@
 import {
   CLOSE_ACCESS_REVOKED,
   CLOSE_CLIENT_OUTDATED,
+  CLOSE_DEMO_LIMIT,
   CLOSE_DELETED,
   CLOSE_INVALID_ID,
   CLOSE_MALFORMED,
@@ -8,6 +9,7 @@ import {
   CLOSE_POLICY,
   CLOSE_READ_ONLY,
   CLOSE_SCHEMA_UNSUPPORTED,
+  CLOSE_SEAT_MOVED,
   CLOSE_TOO_LARGE,
   CLOSE_UNAUTHENTICATED,
 } from "@brahma/protocol";
@@ -38,6 +40,10 @@ export type CloseAction =
   | "not-found"
   /** This bundle's document schema is older than the document's: update and reload. */
   | "outdated"
+  /** Demo: the seat moved to another connection. Stop; never take it back automatically. */
+  | "seat-moved"
+  /** Demo: the demo document is full. Stop; a new demo is the way on. */
+  | "demo-limit"
   /** One bounded retry that sends queued edits one per message to find the rejected one. */
   | "isolate"
   /** Stop syncing this document and show the couldn't-sync banner. Nothing is retried. */
@@ -72,6 +78,11 @@ export function closeAction(code: number, context: CloseContext): CloseAction {
     case CLOSE_NOT_FOUND:
     case CLOSE_INVALID_ID:
       return "not-found";
+    case CLOSE_SEAT_MOVED:
+      // Reconnecting would take the seat back and start a tug of war.
+      return "seat-moved";
+    case CLOSE_DEMO_LIMIT:
+      return "demo-limit";
     case CLOSE_MALFORMED:
     case CLOSE_TOO_LARGE:
       // Never skip an edit and never retry blindly. Try once with one edit

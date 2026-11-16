@@ -26,6 +26,11 @@ export interface SyncClaims {
   av: number;
   name: string;
   image: string | null;
+  /**
+   * A demo seat (Try the demo): valid only for a demo document, which the
+   * sync server checks, with demo limits. Absent for real users.
+   */
+  demo?: boolean;
   /** Seconds since epoch. */
   exp: number;
   iat: number;
@@ -41,7 +46,14 @@ export async function signSyncToken(
   now = Math.floor(Date.now() / 1000),
 ): Promise<string> {
   const key = await importJWK(privateJwk, TOKEN_ALGORITHM);
-  return new SignJWT({ doc: claims.doc, role: claims.role, av: claims.av, name: claims.name, image: claims.image })
+  return new SignJWT({
+    doc: claims.doc,
+    role: claims.role,
+    av: claims.av,
+    name: claims.name,
+    image: claims.image,
+    ...(claims.demo ? { demo: true } : {}),
+  })
     .setProtectedHeader({ alg: TOKEN_ALGORITHM, kid: privateJwk.kid, typ: "JWT" })
     .setIssuer(TOKEN_ISSUER)
     .setAudience(TOKEN_AUDIENCE)
@@ -78,7 +90,7 @@ export async function verifySyncToken(
   } catch (error) {
     throw new TokenError(error instanceof Error ? error.message : "Invalid token");
   }
-  const { sub, doc, role, av, name, image, exp, iat } = payload as Record<string, unknown>;
+  const { sub, doc, role, av, name, image, demo, exp, iat } = payload as Record<string, unknown>;
   if (typeof sub !== "string" || typeof doc !== "string" || typeof exp !== "number" || typeof iat !== "number") {
     throw new TokenError("Malformed claims");
   }
@@ -92,6 +104,7 @@ export async function verifySyncToken(
     av,
     name: typeof name === "string" ? name : "",
     image: typeof image === "string" ? image : null,
+    ...(demo === true ? { demo: true } : {}),
     exp,
     iat,
   };

@@ -18,6 +18,8 @@ describe("closeAction: one row per code", () => {
     ["4427 (schema newer than the deployment accepts) halts, no reload", 4427, {}, "halt"],
     ["4404 is not found", 4404, {}, "not-found"],
     ["4400 is not found", 4400, {}, "not-found"],
+    ["4409 (demo seat moved) stops without reconnecting", 4409, {}, "seat-moved"],
+    ["4429 (demo limit) stops without reconnecting", 4429, { unackedEntries: 2 }, "demo-limit"],
     ["1007 with a batch of edits isolates once", 1007, { unackedEntries: 3 }, "isolate"],
     ["1007 while isolating halts", 1007, { unackedEntries: 1, isolating: true }, "halt"],
     ["1007 with a single edit halts", 1007, { unackedEntries: 1 }, "halt"],
