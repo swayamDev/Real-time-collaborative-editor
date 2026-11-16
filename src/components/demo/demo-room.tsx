@@ -2,25 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
-import { startDemoAction } from "@/app/demo-actions";
 import { DocumentBanner } from "../editor/document-banner";
 import { CollaborativeBody } from "../editor/document-editor";
 import { STATUS_LABELS } from "@/lib/collab/status";
 import { useSyncStatus } from "../editor/use-sync-session";
 import { type DemoSeat, SEAT_NAMES, useDemoSession } from "./demo-session";
-
-export function StartDemoButton({ label = "Start the demo" }: { label?: string }) {
-  return (
-    <form action={startDemoAction}>
-      <button
-        type="submit"
-        className="h-10 rounded-sm bg-indigo px-4 text-ui font-medium text-on-indigo transition-colors duration-100 hover:bg-indigo-hover"
-      >
-        {label}
-      </button>
-    </form>
-  );
-}
+import { StartDemoButton } from "./start-demo-button";
 
 function minutesLeft(expiresAt: number): number {
   return Math.max(0, Math.ceil((expiresAt - Date.now()) / 60_000));

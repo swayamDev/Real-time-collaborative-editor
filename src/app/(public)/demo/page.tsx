@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import QRCode from "qrcode";
-import { DemoRoom, StartDemoButton } from "@/components/demo/demo-room";
+import { DemoRoomLoader } from "@/components/demo/demo-room-loader";
+import { StartDemoButton } from "@/components/demo/start-demo-button";
 import { DEMO_COOKIE, readDemoPass, writeDemoPass } from "@/server/demo";
 
 export const metadata: Metadata = {
@@ -31,7 +32,7 @@ export default async function DemoPage({ searchParams }: PageProps<"/demo">) {
     }
     return (
       <main id="main" className="min-h-dvh bg-sunken">
-        <DemoRoom documentId={pass.documentId} expiresAt={pass.expiresAt} seats={pass.seats} joinUrl={joinUrl} qrCode={qrCode} />
+        <DemoRoomLoader documentId={pass.documentId} expiresAt={pass.expiresAt} seats={pass.seats} joinUrl={joinUrl} qrCode={qrCode} />
       </main>
     );
   }
