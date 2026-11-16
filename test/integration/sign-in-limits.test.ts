@@ -129,3 +129,11 @@ describe("the email provider's quota", () => {
     }
   });
 });
+
+describe("reserved addresses", () => {
+  it("refuses a sign-in link to a .invalid address, such as the demo system user's", async () => {
+    const auth = await loadAuth();
+    const response = await requestLink(auth, "demo@brahma.invalid", randomAddress());
+    expect(response.status).toBe(400);
+  });
+});

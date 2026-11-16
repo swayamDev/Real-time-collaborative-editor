@@ -32,3 +32,24 @@ export function clientIpOptions(env: Record<string, string | undefined> = proces
     .filter(Boolean);
   return proxies.length > 0 ? { ipAddressHeaders: [header], trustedProxies: proxies } : { ipAddressHeaders: [header] };
 }
+
+/**
+ * The client's address for the app's own per-address limits (the demo),
+ * read the way the auth limits read it. Null when no header is trusted:
+ * those limits are then off and only the site-wide ones apply. With
+ * AUTH_TRUSTED_PROXIES, the rightmost address not listed is the client
+ * (exact addresses only here); without it, the first address.
+ */
+export function clientAddress(headers: Headers, env: Record<string, string | undefined> = process.env): string | null {
+  const options = clientIpOptions(env);
+  const header = options.ipAddressHeaders?.[0];
+  if (!header) return null;
+  const addresses = (headers.get(header) ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (addresses.length === 0) return null;
+  const proxies = new Set(options.trustedProxies ?? []);
+  if (proxies.size === 0) return addresses[0];
+  return [...addresses].reverse().find((address) => !proxies.has(address)) ?? null;
+}

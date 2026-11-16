@@ -38,3 +38,12 @@ export async function issueSyncToken(
   };
   return { token: await signSyncToken(claims, privateKey()), claims };
 }
+
+/**
+ * A sync token for a demo seat ("Try the demo"): editor of one demo
+ * document, marked as a demo so the sync server allows it only there.
+ * Callers check the demo pass and the document first (src/server/demo.ts).
+ */
+export async function issueDemoSyncToken(documentId: string, userId: string, name: string): Promise<string> {
+  return signSyncToken({ sub: userId, doc: documentId, role: "editor", av: 0, name, image: null, demo: true }, privateKey());
+}

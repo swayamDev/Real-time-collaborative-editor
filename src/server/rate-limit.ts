@@ -24,6 +24,14 @@ export const LIMITS = {
   magicLinkSiteWide: { max: Number(process.env.MAGIC_LINK_DAILY_LIMIT) || 80, windowSeconds: 24 * 60 * 60 },
   /** Per user and document: several tabs with reconnects stay well under it. */
   syncToken: { max: 600, windowSeconds: 60 * 60 },
+  /** Demos started per client address (when one is trusted). */
+  demoPerAddress: { max: 5, windowSeconds: 60 * 60 },
+  /**
+   * Demos started site wide per day, sized to the Workers free plan: a full
+   * demo writes at most about 700 Durable Object rows of the plan's 100,000
+   * a day, so 30 demos stay under a quarter of it (see README, Demo).
+   */
+  demoDaily: { max: Number(process.env.DEMO_DAILY_LIMIT) || 30, windowSeconds: 24 * 60 * 60 },
 } satisfies Record<string, Limit>;
 
 /**

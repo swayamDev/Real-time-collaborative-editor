@@ -73,6 +73,11 @@ export const auth = betterAuth({
         // Limits that hold whatever headers a client sends: per address, so
         // one inbox cannot be flooded, and site wide, to cap sending.
         const to = normalizeEmail(email);
+        // Reserved, undeliverable domains (the demo system user's address is
+        // one): a link to them could only ever sign someone in as that user.
+        if (to.endsWith(".invalid")) {
+          throw new APIError("BAD_REQUEST", { message: "Enter an email address you can receive mail at." });
+        }
         if (!(await allow("magicLinkPerEmail", to)) || !(await allow("magicLinkSiteWide", "all"))) {
           throw new APIError("TOO_MANY_REQUESTS", { message: "Too many sign-in links. Try again later." });
         }
