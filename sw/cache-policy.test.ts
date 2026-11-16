@@ -123,6 +123,8 @@ describe("isPublicPage", () => {
   it("leaves the privacy policy to the network, never in a user's page cache", () => {
     expect(isPublicPage("/privacy")).toBe(true);
     expect(isPublicPage("/privacy/")).toBe(true);
+    expect(isPublicPage("/demo")).toBe(true);
+    expect(isPublicPage("/demo/join")).toBe(true);
     expect(isPublicPage("/")).toBe(false);
     expect(isPublicPage("/d/123")).toBe(false);
     expect(isPublicPage("/privacy-notes")).toBe(false);

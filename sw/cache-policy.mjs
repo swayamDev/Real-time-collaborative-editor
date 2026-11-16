@@ -9,7 +9,7 @@ export const USER_KEY = "/__brahma/user";
 export const REFRESH_KEY = "/__brahma/refresh-pending";
 export const OFFLINE_URL = "/offline";
 /** Pages anyone can open signed out. Never stored in a user's page cache: always from the network. */
-export const PUBLIC_PAGES = ["/privacy"];
+export const PUBLIC_PAGES = ["/privacy", "/demo", "/demo/join"];
 
 export function isPublicPage(pathname) {
   return PUBLIC_PAGES.includes(pathname.replace(/\/+$/, "") || "/");

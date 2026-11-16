@@ -50,6 +50,8 @@ export default defineConfig({
       AUTH_CLIENT_IP_HEADER: "x-forwarded-for",
       // Many sign-ins per run; the site-wide ceiling is for real traffic.
       MAGIC_LINK_DAILY_LIMIT: "100000",
+      // Many demos per run; the daily cap is for real traffic.
+      DEMO_DAILY_LIMIT: "100000",
     },
   },
 });

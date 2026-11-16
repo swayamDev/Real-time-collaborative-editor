@@ -330,7 +330,7 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, 
   );
 }
 
-function CollaborativeBody({
+export function CollaborativeBody({
   doc,
   session,
   readOnly,

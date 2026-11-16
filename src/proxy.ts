@@ -2,7 +2,7 @@ import { getSessionCookie } from "better-auth/cookies";
 import { type NextRequest, NextResponse } from "next/server";
 
 /** Pages anyone can open without signing in (keep in step with PUBLIC_PAGES in sw/cache-policy.mjs). */
-const PUBLIC_PATHS = ["/privacy"];
+const PUBLIC_PATHS = ["/privacy", "/demo", "/demo/join"];
 
 /**
  * Send visitors without a session cookie to sign in. This is only a fast

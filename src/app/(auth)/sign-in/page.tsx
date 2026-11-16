@@ -14,6 +14,13 @@ export default async function SignInPage({ searchParams }: PageProps<"/sign-in">
   return (
     <main id="main" className="flex min-h-dvh flex-col items-center bg-paper px-4 pt-[18vh] pb-8">
       <SignInForm next={next} googleEnabled={googleEnabled} />
+      <p className="mt-10 w-full max-w-sm text-ui text-ink-muted">
+        Just looking?{" "}
+        <Link href="/demo" className="text-indigo underline-offset-2 hover:underline" data-testid="try-demo">
+          Try the demo
+        </Link>
+        : two visitors, one live document, no account.
+      </p>
       <footer className="mt-auto pt-16 text-meta text-ink-muted">
         <Link href="/privacy" className="underline-offset-2 hover:text-ink hover:underline">
           Privacy policy
