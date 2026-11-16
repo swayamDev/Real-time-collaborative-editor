@@ -17,6 +17,8 @@ export interface Identity {
   exp: number;
   /** The document schema version the client's editor runs (0 if it did not say). */
   schema: number;
+  /** A demo seat (the token's demo claim): only for demo rooms, with demo limits. */
+  demo: boolean;
 }
 
 const PREFIX = "x-brahma-";
@@ -30,6 +32,7 @@ export function identityFromClaims(claims: SyncClaims, schema: number): Identity
     image: claims.image,
     exp: claims.exp,
     schema,
+    demo: claims.demo === true,
   };
 }
 
@@ -52,7 +55,7 @@ export function readIdentity(headers: Headers): Identity | null {
   try {
     const value = JSON.parse(raw) as Identity;
     if (typeof value.userId !== "string" || typeof value.role !== "string") return null;
-    return { ...value, schema: Number.isInteger(value.schema) ? value.schema : 0 };
+    return { ...value, schema: Number.isInteger(value.schema) ? value.schema : 0, demo: value.demo === true };
   } catch {
     return null;
   }

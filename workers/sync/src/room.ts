@@ -3,9 +3,11 @@ import {
   CLOSE_CLIENT_OUTDATED,
   CLOSE_SCHEMA_UNSUPPORTED,
   CLOSE_DELETED,
+  CLOSE_DEMO_LIMIT,
   CLOSE_MALFORMED,
   CLOSE_POLICY,
   CLOSE_READ_ONLY,
+  CLOSE_SEAT_MOVED,
   CLOSE_UNAUTHENTICATED,
   SYNC_SUBPROTOCOL,
   type TokenRole,
@@ -43,6 +45,15 @@ export const COMPACT_AFTER_BATCHES = 100;
 export const SNAPSHOT_DEBOUNCE_MS = 2_000;
 /** ...but no later than this after the oldest edit not yet in Postgres. */
 export const SNAPSHOT_MAX_WAIT_MS = 10_000;
+/**
+ * Demo rooms ("Try the demo"). Bounded so demos cannot use up the free
+ * plan's daily Durable Object writes (100,000 rows): each batch writes one
+ * update row, deleted again at compaction, so a full demo costs about 700
+ * rows. No Postgres snapshots: a demo lives only here, until it expires.
+ */
+export const DEMO_MAX_SOCKETS = 2;
+export const DEMO_MAX_BATCHES = 300;
+export const DEMO_MAX_BYTES = 64 * 1024;
 
 /** Per-socket state that must survive hibernation. Kept small (2 KB limit). */
 interface Attachment {
@@ -144,6 +155,17 @@ export class DocumentRoom extends DurableObject<Env> {
     if (result === "deleted") return refuse(CLOSE_DELETED, "Document deleted");
     if (result !== "ok") return refuse(CLOSE_NOT_FOUND, "Document not found");
 
+    // A demo seat opens only a demo document, and a real user's token never
+    // opens one. Refused as not found, so neither learns the other exists.
+    const demoUntil = this.storage.demoExpiresAt();
+    if (identity.demo !== (demoUntil !== null)) {
+      return refuse(CLOSE_NOT_FOUND, identity.demo ? "Demo seat on a real document" : "Not a demo seat");
+    }
+    if (demoUntil !== null && Date.now() >= demoUntil) {
+      await this.deleteRoom();
+      return refuse(CLOSE_DELETED, "Demo ended");
+    }
+
     // A client running an older document schema would remove content made
     // with newer node types (an editor's binding removes what its schema
     // cannot hold). Refuse it before it can send anything; it updates and
@@ -157,6 +179,17 @@ export class DocumentRoom extends DurableObject<Env> {
 
     const role = effectiveRole(identity, this.storage.getAccess(identity.userId));
     if (!role) return refuse(CLOSE_ACCESS_REVOKED, "Access removed");
+
+    if (demoUntil !== null) {
+      // One socket per seat: a newer one (the same pane reconnecting, or the
+      // seat opened on another device) takes the seat over.
+      for (const other of this.openSockets()) {
+        const held = other.deserializeAttachment() as Attachment | null;
+        if (held?.userId === identity.userId) this.reject(other, CLOSE_SEAT_MOVED, "This seat moved to another connection");
+      }
+      if (this.openSockets().length >= DEMO_MAX_SOCKETS) return refuse(CLOSE_DEMO_LIMIT, "Demo is full");
+      if (this.demoFull()) return refuse(CLOSE_DEMO_LIMIT, "Demo limit reached");
+    }
 
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({
@@ -221,6 +254,9 @@ export class DocumentRoom extends DurableObject<Env> {
           decoded = Y.decodeUpdate(message.update);
         } catch {
           return this.reject(ws, CLOSE_MALFORMED, "Invalid Yjs update");
+        }
+        if (this.storage.demoExpiresAt() !== null && (this.demoFull() || message.update.byteLength > DEMO_MAX_BYTES)) {
+          return this.closeFullDemo();
         }
         if (!canWrite(attachment.role)) {
           // A viewer still answers Step 1 with an empty Step 2. Anything that
@@ -479,12 +515,22 @@ export class DocumentRoom extends DurableObject<Env> {
         return;
       }
 
+      if (record.demoExpiresAt !== null && record.demoExpiresAt <= Date.now()) {
+        result = "deleted";
+        return;
+      }
+
       const doc = this.buildDoc([record.state]);
       // Phase 1 documents have their title only in the Postgres column.
       const title = doc.getText(TITLE_FIELD);
       if (title.length === 0 && record.title !== "") title.insert(0, record.title);
 
       this.storage.initialize(documentId, Y.encodeStateAsUpdate(doc));
+      if (record.demoExpiresAt !== null) {
+        this.storage.setDemoExpiresAt(record.demoExpiresAt);
+        // The only alarm a demo room ever sets: erase it when the demo ends.
+        this.scheduleAlarm(record.demoExpiresAt);
+      }
       this.attachDoc(doc);
       result = "ok";
     });
@@ -521,14 +567,16 @@ export class DocumentRoom extends DurableObject<Env> {
     this.flushTimer = null;
     if (this.deleted || !this.doc) return;
 
+    const demo = this.storage.demoExpiresAt() !== null;
     if (this.pendingUpdates.length > 0) {
       this.storage.appendUpdate(Y.mergeUpdates(this.pendingUpdates));
       this.pendingUpdates = [];
-      this.storage.markDirty(Date.now());
+      // A demo never goes to Postgres: no dirty mark, no snapshot alarm.
+      if (!demo) this.storage.markDirty(Date.now());
       if (this.storage.updateCount() >= COMPACT_AFTER_BATCHES) {
         this.storage.writeSnapshot(Y.encodeStateAsUpdate(this.doc));
       }
-      this.afterWrite();
+      if (!demo) this.afterWrite();
     }
 
     // The output gate holds these until the write above is durable.
@@ -537,6 +585,17 @@ export class DocumentRoom extends DurableObject<Env> {
       if (attachment) this.send(ws, encodeAck(attachment.received));
     }
     this.pendingAcks.clear();
+    if (demo && this.demoFull()) this.closeFullDemo();
+  }
+
+  /** A demo room has reached its write or size limit. */
+  private demoFull(): boolean {
+    return this.storage.batchesWritten() >= DEMO_MAX_BATCHES || this.storage.storedBytes() >= DEMO_MAX_BYTES;
+  }
+
+  /** Close every socket of a full demo; the demo page offers a new one. */
+  private closeFullDemo(): void {
+    for (const ws of this.openSockets()) this.reject(ws, CLOSE_DEMO_LIMIT, "Demo limit reached");
   }
 
   // Snapshots to Postgres
@@ -584,9 +643,15 @@ export class DocumentRoom extends DurableObject<Env> {
    * gone, the document was deleted in Postgres, so the room deletes itself.
    */
   async alarm(): Promise<void> {
+    this.alarmSetFor = null;
+    const demoUntil = this.storage.demoExpiresAt();
+    if (demoUntil !== null) {
+      if (Date.now() >= demoUntil) await this.deleteRoom();
+      else this.scheduleAlarm(demoUntil);
+      return;
+    }
     const doc = this.doc;
     const documentId = this.storage.documentId();
-    this.alarmSetFor = null;
     if (this.deleted || !doc || !documentId) return;
     this.flush();
     if (this.storage.dirtySince() === null) return;

@@ -20,6 +20,8 @@ export interface TestUser {
   role: TokenRole;
   av: number;
   name: string;
+  /** A demo seat: the token carries the demo claim. */
+  demo?: boolean;
 }
 
 export const EDITOR: TestUser = { sub: "user-editor", role: "editor", av: 1, name: "Ada" };
@@ -29,7 +31,7 @@ export const OWNER: TestUser = { sub: "user-owner", role: "owner", av: 0, name: 
 /** A signed sync token, as the Next app would issue it. `issuedAt` shifts the lifetime. */
 export function tokenFor(documentId: string, user: TestUser, issuedAt?: number): Promise<string> {
   return signSyncToken(
-    { sub: user.sub, doc: documentId, role: user.role, av: user.av, name: user.name, image: null },
+    { sub: user.sub, doc: documentId, role: user.role, av: user.av, name: user.name, image: null, demo: user.demo },
     testSigningKey(),
     issuedAt,
   );

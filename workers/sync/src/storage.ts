@@ -61,6 +61,29 @@ export class RoomStorage {
     this.setMeta("newest_schema", String(version));
   }
 
+  /** When this demo room ends (ms since epoch); null for a real document. */
+  demoExpiresAt(): number | null {
+    const value = this.getMeta("demo_expires_at");
+    return value === null ? null : Number(value);
+  }
+
+  setDemoExpiresAt(at: number): void {
+    this.setMeta("demo_expires_at", String(at));
+  }
+
+  /** Update batches ever written in this room (compaction does not reset the sequence). */
+  batchesWritten(): number {
+    const rows = this.sql.exec<{ seq: number }>("SELECT seq FROM sqlite_sequence WHERE name = 'updates'").toArray();
+    return rows[0]?.seq ?? 0;
+  }
+
+  /** Bytes held for the document: snapshot plus update log. */
+  storedBytes(): number {
+    const snapshot = this.sql.exec<{ n: number | null }>("SELECT SUM(length(data)) AS n FROM snapshot").one().n ?? 0;
+    const updates = this.sql.exec<{ n: number | null }>("SELECT SUM(length(data)) AS n FROM updates").one().n ?? 0;
+    return snapshot + updates;
+  }
+
   /** The document this room belongs to, once it has been loaded. */
   documentId(): string | null {
     return this.getMeta("document_id");
