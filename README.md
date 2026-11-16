@@ -1,6 +1,30 @@
 # Brahma
 
-A collaborative document editor, built in phases. This repository is at **Phase 4**: people sign in, own documents and share them as editors or viewers; several people edit the same document live, with presence, through a sync server built on Cloudflare Durable Objects; and Brahma keeps working without a network. Permissions are enforced on the app server and again on the sync server (see [Auth and permissions](#auth-and-permissions)).
+A collaborative document editor. Several people edit the same document at once, with live cursors and names, and their edits merge without conflicts. It keeps working without a network: edits are written to the device first, survive closing the tab, and sync when the connection returns. Owners share documents with editors and viewers, and those roles are enforced on the server and on the live connection, so access ends the moment it is removed. It runs as a Next.js app on Vercel, a sync server on Cloudflare Durable Objects, and Postgres on Neon.
+
+**Live:** https://editor.swayam.space. **[Try the demo](https://editor.swayam.space/demo):** two visitors, one document, no account needed.
+
+![Two people editing one document, with live cursors](docs/media/demo.gif)
+
+## Built with
+
+- **App:** Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS
+- **Editor:** Tiptap 3 on ProseMirror, with Yjs for shared state
+- **Sync:** Cloudflare Workers and Durable Objects (SQLite storage), one room per document
+- **Data:** Neon Postgres with Drizzle ORM; IndexedDB on the device
+- **Accounts and email:** Better Auth (Google and email sign-in links), Resend
+- **Errors:** Sentry, with personal data stripped
+- **Tests:** Vitest (unit, integration against Postgres, and the Worker in the Workers runtime) and Playwright
+
+## What's hard about this
+
+- **CRDT sync on Durable Objects.** Each document is one Durable Object holding the Yjs state in SQLite, snapshotted to Postgres. Every edit is acknowledged only once it is stored, and reconnecting is a state-vector exchange rather than a replay, so a client that was away for a day receives exactly what it lacks. See [Sync protocol](#sync-protocol) and [Snapshots and persistence](#snapshots-and-persistence).
+- **Offline with a durable queue.** Every edit is written to IndexedDB before it is sent, survives a closed tab or a crash, and is flushed in order under a lock shared by the tabs, then checked for convergence with the server. A deleted or revoked copy can never be brought back by a late write. See [Offline](#offline).
+- **Permissions on the socket, not only in the UI.** Roles travel in short-lived signed tokens that the sync server verifies. Downgrades and revocations reach open sockets at once, a viewer's writes are refused by the server, and presence is bound to the signed-in user. See [Auth and permissions](#auth-and-permissions).
+- **Schema versioning.** Every client declares the document schema it runs. The sync server refuses clients outside the deployment's range, so an old cached bundle cannot strip newer content, and an outdated tab updates and reloads without losing queued edits. See [Changing the document schema](#changing-the-document-schema).
+- **The airplane-mode bug.** A phone that loses its network sends no close frame, so the sync server still held its old socket and refused the reconnect as someone else's presence; the document halted and stayed halted. Playwright's offline mode closes sockets cleanly, so the test suite never saw it. Reproducing it took a test that drops only the page's side of the socket; the fix retires the stale socket for the same user, and a halt now always offers Try again. See [Sync protocol](#sync-protocol).
+
+The rest of this README is the detailed documentation.
 
 ## What it does
 
@@ -126,8 +150,8 @@ Operational transformation (Google Docs, early Etherpad) sends operations to a c
 A CRDT (here, Yjs) gives every character a unique id and a position relative to its neighbours, so concurrent edits merge to the same result on every replica regardless of the order they arrive in. For Brahma that means:
 
 - **The server is a relay and a store, not an arbiter.** It does not transform anything. It merges updates with `Y.applyUpdate`, which is commutative and idempotent, so a resent update is harmless.
-- **Reconnects are a state exchange, not a replay.** After an outage each side sends its state vector and receives exactly what it lacks (the sync handshake below). Edits made while disconnected need no special handling. This is also the foundation for offline support in Phase 3.
-- **The data model did not change.** Phase 1 already stored Yjs state, so Phase 1 documents load into a Durable Object as they are.
+- **Reconnects are a state exchange, not a replay.** After an outage each side sends its state vector and receives exactly what it lacks (the sync handshake below). Edits made while disconnected need no special handling. It is also what offline support is built on.
+- **The data model did not change.** The first version already stored Yjs state, so its documents load into a Durable Object as they are.
 - **Per-user undo falls out of transaction origins.** Every change carries an origin; the undo manager tracks only local origins.
 
 The costs: Yjs keeps tombstones for deleted content (garbage-collected where safe, and compacted on every snapshot), and the merged result of a true conflict, such as two people typing at the same spot, is deterministic but not always what either person intended. For prose that is the right trade.
@@ -238,7 +262,7 @@ Typical transitions: from Saved, the network drops and the label becomes Saved o
 - immediately when the last client disconnects;
 - before a rename from the sidebar answers, so a reload right after it lists the new title.
 
-The title in the column is cleaned the same way Phase 1 validated it. If the write fails, the alarm throws and the runtime retries it with backoff; the edits stay marked dirty. If the row is gone (deleted elsewhere), the room deletes itself. Because each room is the only writer of its row, no row lock or transaction is needed.
+The title in the column is cleaned the same way the first version validated it. If the write fails, the alarm throws and the runtime retries it with backoff; the edits stay marked dirty. If the row is gone (deleted elsewhere), the room deletes itself. Because each room is the only writer of its row, no row lock or transaction is needed.
 
 **Connecting to Neon from the Worker.** The Worker uses `pg` with the `nodejs_compat` flag. `pg` detects the Workers runtime and opens a raw TCP socket through `cloudflare:sockets`. Each load or snapshot opens a short connection, runs one statement and closes it, which suits the low rate (one snapshot every few seconds per active document). In production `DATABASE_URL` should be Neon's pooled string, so many rooms share few Postgres connections. Hyperdrive would cut connection latency and is a drop-in later.
 
@@ -348,7 +372,7 @@ Integration tests call every action and route as owner, editor, viewer, a strang
 Each user has their own IndexedDB database and their own page caches, so one person's documents and offline edits are never visible to another.
 
 - **Sign-out** ends the session, deletes the user's database and page caches, and sends their other tabs to sign-in. If the device holds edits that never synced, it asks first, since they would be lost. If the server cannot be reached, the dialog offers **Remove my data from this device**: the data is deleted at once, the page shows only "Your data was removed from this device. You'll be signed out when this device is back online, or when your session expires.", and the sign-out finishes when the device is back online.
-- **Signing in cleans up after anyone else.** Sign-out does not always run (a session expires, a tab closes while offline), so every signed-in page load deletes other users' databases and page caches, the Phase 3 `brahma` database and the old guest cookies, and reloads tabs still showing someone else.
+- **Signing in cleans up after anyone else.** Sign-out does not always run (a session expires, a tab closes while offline), so every signed-in page load deletes other users' databases and page caches, the older shared `brahma` database (from before each user had their own) and the old guest cookies, and reloads tabs still showing someone else.
 - **That cleanup runs only after the server confirms the signed-in user**, so it never runs offline. A page can show a user who is no longer signed in: a page served from the offline cache, or a tab left open from before someone else signed in. Cleaning up for that user would delete the signed-in person's data, so the page first asks the server who is signed in, and does nothing unless it is the page's user.
 - **Pruning.** On a confirmed load, local copies of documents the user can no longer open are deleted, unless they hold edits that never synced (opening those shows the removed or deleted handling above).
 - **A removed copy stays removed.** When access is removed, a document is deleted, or the user signs out, the page first stops the open document's writes to the device (a pending title save, batched updates from the server, compaction), then deletes the copy. The device store also refuses every write to a document whose record is gone; only opening a document creates its record. So a write that arrives later, from a timer, a late reply or another tab, cannot bring back a document, its title or its content. Edits refused this way stay in that tab's memory.
@@ -476,7 +500,7 @@ The version protects honest clients running an old bundle. A client can claim an
 
 ## Why Yjs never loads on the server
 
-Turbopack bundles `node_modules` into each server entry (pages, route handlers, server-side rendering of client components), and all of them run in one Node process. Yjs sets a flag on `globalThis` when it loads and warns when a second copy appears ("Yjs was already imported"), because two copies break its `instanceof` checks. Phase 1 had four server copies. Now:
+Turbopack bundles `node_modules` into each server entry (pages, route handlers, server-side rendering of client components), and all of them run in one Node process. Yjs sets a flag on `globalThis` when it loads and warns when a second copy appears ("Yjs was already imported"), because two copies break its `instanceof` checks. Before this was fixed there were four server copies. Now:
 
 - Server code never imports Yjs: new documents use a two-byte empty-state constant, and merging happens in the Durable Object.
 - The editor loads with `next/dynamic` and `ssr: false`, behind a skeleton that reserves its space so nothing shifts.
@@ -495,11 +519,11 @@ documents
   deleted_at   timestamptz        tombstone; set when a document is deleted, with title and yjs_state erased
 ```
 
-**Why Yjs state was stored from day one.** Phase 1 already kept the body in a `Y.Doc` and stored its binary state, not HTML or ProseMirror JSON. Phase 2 changed the transport (HTTP saves became a WebSocket to a Durable Object) without converting a single document: a room loads the stored bytes as they are.
+**Why Yjs state was stored from day one.** The first version already kept the body in a `Y.Doc` and stored its binary state, not HTML or ProseMirror JSON. Moving to real-time sync changed the transport (HTTP saves became a WebSocket to a Durable Object) without converting a single document: a room loads the stored bytes as they are.
 
-**Why the title is both shared and a column.** Inside the document it is a `Y.Text`, so it syncs live and merges like the body. The sidebar needs titles for every document without loading Yjs, so snapshots copy it into the column. A Phase 1 document's title exists only in the column; its room seeds the `Y.Text` from it on first load.
+**Why the title is both shared and a column.** Inside the document it is a `Y.Text`, so it syncs live and merges like the body. The sidebar needs titles for every document without loading Yjs, so snapshots copy it into the column. A document from the first version has its title only in the column; its room seeds the `Y.Text` from it on first load.
 
-**Ownership and access (Phase 4).**
+**Ownership and access.**
 
 ```
 documents.owner_id     text, not null, references user      every document has one owner
@@ -714,7 +738,7 @@ Run against production after the first deploy and after any risky change:
 
 ## Next
 
-Agreed out of scope for Phase 4:
+Agreed out of scope for now:
 
 - **Transferring ownership** to another member.
 - **A full script Content Security Policy** with per-request nonces.
