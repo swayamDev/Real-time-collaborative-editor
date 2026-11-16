@@ -432,6 +432,22 @@ A demo touches Postgres only to create its row, check its tokens and be deleted,
 
 It must match the code. Update the page, and its "Last updated" date, when any of these change: the user, session, account, document, invite or share link tables; the providers (Neon, Vercel, Cloudflare, Resend, Sentry, Google) or their regions; the session length; the cookies or browser storage; the backup policy; what the Sentry scrubber removes. Contact goes through GitHub issues, never a personal email address.
 
+### Icons, link previews and robots
+
+Every icon and the link preview image come from one file, [brand/logo.svg](brand/logo.svg), through one script:
+
+```sh
+pnpm brand
+```
+
+It writes, into `public/`: `favicon.ico` (16, 32 and 48 px), `icon.svg` (with a dark variant that follows the system setting), `apple-touch-icon.png` (180 px), `icons/icon-192.png`, `icons/icon-512.png`, `icons/maskable-512.png` (the mark inside the maskable safe zone), and `og.png` (1200 by 630: the mark, the name, the one-line pitch and the address). Text is drawn as outlines from the fonts in [brand/fonts](brand/fonts) (Literata and Schibsted Grotesk, SIL Open Font License), so nothing needs a font at runtime. Colors come from [src/lib/brand.ts](src/lib/brand.ts), which a unit test keeps equal to the design tokens.
+
+**Replacing the logo.** The current mark is a temporary Literata "B" (`pnpm brand --monogram` redraws it). To use a real logo, replace `brand/logo.svg` with a square SVG and run `pnpm brand`, then commit `brand/` and `public/`. Give the background the class `bg` and the mark the class `fg` to get the paper and indigo colors, and the dark variant, for free; a logo with its own colors works too, with the same colors in dark mode. Keep the mark within about the middle 80 percent if you want it to survive the circular crop of maskable icons.
+
+**Manifest and metadata.** [manifest.ts](src/app/manifest.ts) serves `/manifest.webmanifest` (standalone, start and scope `/`, the service worker's scope, colors from the tokens). Page titles read "Q3 planning notes · Brahma". Link previews are site-wide (the sign-in, demo and privacy pages set their own description); a document page sets only its tab title, so no document title reaches a preview, and those pages need an account anyway.
+
+**robots.txt** ([robots.ts](src/app/robots.ts)) allows the sign-in, demo and privacy pages, the icons, the preview image and static files, and disallows everything else, including `/api/`. The demo page stays noindex; demo join links are never crawled. The request proxy lets these files through without a session.
+
 ### Security headers
 
 Every response carries a Content Security Policy with `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'` and `object-src 'none'`; `X-Frame-Options: DENY`; `Referrer-Policy: same-origin` (document and share-link URLs carry ids and tokens); `X-Content-Type-Options: nosniff`; `Cross-Origin-Opener-Policy: same-origin`; a Permissions-Policy that turns off camera, microphone, location and payments; and HSTS when the app's URL is https.
@@ -735,6 +751,7 @@ Run against production after the first deploy and after any risky change:
 10. **Sign out** on the phone: in its developer tools, no `brahma:*` IndexedDB databases and no `brahma-pages` caches remain, and `/` goes to sign-in.
 11. **Headers:** `curl -sI https://editor.swayam.space/sign-in` shows the Content-Security-Policy, X-Frame-Options and Strict-Transport-Security headers.
 12. **Privacy policy:** in a private window, https://editor.swayam.space/privacy opens without signing in, and the sign-in page links to it.
+13. **Icons and previews:** the tab shows the B icon; paste https://editor.swayam.space into a chat app and the preview shows the name and pitch; https://editor.swayam.space/robots.txt lists the allowed pages.
 
 ## Next
 
@@ -760,7 +777,8 @@ src/
   server/              auth, guards, sharing, sync tokens, rate limits, the sync server's internal API
 packages/protocol/     wire format, limits, presence rules shared by client and server
 sw/                    service worker template and its cache rules (built into public/sw.js)
-scripts/               preflight checks, production keys, Neon backups, service worker build
+scripts/               preflight checks, production keys, Neon backups, service worker build, icons (pnpm brand)
+brand/                 the logo source and the fonts the icon script draws with
 workers/sync/          Cloudflare Worker: router, DocumentRoom Durable Object, Postgres store
 test/integration/      server actions, routes and authorization against Postgres
 e2e/                   Playwright tests: signed-in people in separate browsers, offline, permissions
