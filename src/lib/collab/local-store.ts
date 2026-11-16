@@ -39,6 +39,8 @@ export interface DocumentMeta {
   halted: boolean;
   /** The user's role when last seen online; offline lists use it to group documents. */
   role?: "owner" | "editor" | "viewer";
+  /** When `title` last changed on this device (ms); the sidebar weighs it against the server's list. */
+  titleChangedAt?: number;
 }
 
 export interface PendingRow {

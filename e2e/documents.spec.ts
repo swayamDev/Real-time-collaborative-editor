@@ -1,5 +1,7 @@
+import { Client } from "pg";
 import { expect, test } from "./fixtures";
-import { createDocument, expectSaved, setTitle, sidebarRow, uniqueTitle } from "./helpers";
+import { databaseUrl } from "./sync-server";
+import { createDocument, expectSaved, setAccess, setTitle, share, sidebarRow, uniqueTitle } from "./helpers";
 
 test("renames a document from the sidebar", async ({ page }) => {
   await createDocument(page);
@@ -55,6 +57,80 @@ test("deletes a document after confirming, and cancel keeps it", async ({ page }
 
   await page.reload();
   await expect(sidebarRow(page, title)).toHaveCount(0);
+});
+
+test("a renamed document keeps its title in the list while the server lags (issue #2)", async ({ page }) => {
+  await createDocument(page);
+  const id = page.url().split("/d/")[1];
+  const renamed = uniqueTitle("Renamed");
+
+  // Hold the document's row: the sync server's snapshot (which copies the
+  // title into the list) waits behind the lock, as it does when the server
+  // lags. Reading the list is not blocked.
+  const db = new Client({ connectionString: databaseUrl() });
+  await db.connect();
+  try {
+    await db.query("BEGIN");
+    await db.query("SELECT 1 FROM documents WHERE id = $1 FOR UPDATE", [id]);
+    await setTitle(page, renamed);
+
+    // Creating another document refreshes the list from the server, which
+    // still has the old title. The sidebar keeps the one this tab knows.
+    await createDocument(page);
+    await expect(sidebarRow(page, renamed)).toBeVisible({ timeout: 5_000 });
+  } finally {
+    await db.query("ROLLBACK").catch(() => {});
+    await db.end();
+  }
+});
+
+test("a newer rename from another browser wins over an older title on this device (issue #2)", async ({ page: laptop, accounts, openAs }) => {
+  await createDocument(laptop);
+  const id = laptop.url().split("/d/")[1];
+  const older = uniqueTitle("Named on the laptop");
+  await setTitle(laptop, older);
+  // Leave the document, so the laptop does not see the next rename live.
+  await createDocument(laptop);
+
+  const phone = await openAs(accounts.ada);
+  await phone.goto(`/d/${id}`);
+  const newer = uniqueTitle("Renamed on the phone");
+  await setTitle(phone, newer);
+
+  // Once the server has the newer rename, it beats the laptop's own title.
+  // Each check waits for the device's titles to load after the reload.
+  await expect
+    .poll(
+      async () => {
+        await laptop.reload();
+        await expect(laptop.getByTestId("document-list-docked")).toBeVisible();
+        await laptop.waitForTimeout(1_000);
+        return { newer: await sidebarRow(laptop, newer).count(), older: await sidebarRow(laptop, older).count() };
+      },
+      { timeout: 30_000, intervals: [1_000] },
+    )
+    .toEqual({ newer: 1, older: 0 });
+});
+
+test("a title known on this device never brings back a document the server no longer lists (issue #2)", async ({ page: ada, accounts, openAs }) => {
+  await createDocument(ada);
+  await share(ada, accounts.grace.email, "editor");
+  const url = ada.url();
+
+  const grace = await openAs(accounts.grace);
+  await grace.goto(url);
+  const titleOnGrace = uniqueTitle("Grace named it");
+  await setTitle(grace, titleOnGrace);
+  await expect(sidebarRow(grace, titleOnGrace)).toHaveCount(1);
+  // Grace moves on; this device keeps its copy, with that title.
+  await createDocument(grace);
+
+  await ada.goto(url);
+  await setAccess(ada, accounts.grace.email, null);
+  await grace.reload();
+  await expect(grace.getByTestId("document-list-docked")).toBeVisible();
+  await grace.waitForTimeout(1_500);
+  await expect(sidebarRow(grace, titleOnGrace)).toHaveCount(0);
 });
 
 test("the list is sorted by last edit", async ({ page }) => {

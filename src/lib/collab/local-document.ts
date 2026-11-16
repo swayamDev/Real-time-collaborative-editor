@@ -13,8 +13,6 @@ export const REMOTE_ORIGIN = Symbol("remote");
 /** Compact the acknowledged updates once there are this many rows. */
 export const COMPACT_AFTER_ROWS = 200;
 const REMOTE_BATCH_MS = 300;
-/** A title change is saved to the device's document list after this pause. */
-export const TITLE_SAVE_MS = 500;
 
 /** A local edit as the provider sees it. */
 export interface LocalEdit {
@@ -70,7 +68,10 @@ export class LocalDocument {
   private readonly changeListeners = new Set<Listener>();
   private remoteBatch: Uint8Array[] = [];
   private remoteTimer: ReturnType<typeof setTimeout> | null = null;
-  private titleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The device's copy of the title: one write at a time, the latest title always last. */
+  private titleWrite: Promise<void> | null = null;
+  private titleDirty = false;
+  private titleChangedAt = 0;
   private destroyed = false;
   /** Set by dispose(): this page writes nothing more for this document. */
   private disposed = false;
@@ -225,7 +226,7 @@ export class LocalDocument {
   /**
    * Stop writing this document to the device, for good, before its local
    * copy is deleted (access removed, deleted on the server, sign-out). The
-   * title save and batched remote updates are dropped, and later edits,
+   * batched remote updates and any further title change are dropped, and later edits,
    * acknowledgements and compactions write nothing. The Y.Doc stays usable
    * in memory, so the page can still offer a download. Resolves once local
    * edits already being written have settled, so the store is final.
@@ -233,13 +234,12 @@ export class LocalDocument {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    if (this.titleTimer) clearTimeout(this.titleTimer);
+    this.titleDirty = false;
     if (this.remoteTimer) clearTimeout(this.remoteTimer);
-    this.titleTimer = null;
     this.remoteTimer = null;
     this.remoteBatch = [];
     this.emitChange();
-    await Promise.all([...this.unwritten].map((edit) => edit.seq));
+    await Promise.all([...[...this.unwritten].map((edit) => edit.seq), this.titleWrite]);
   }
 
   /** The page is done with this document (unmount): write what is batched, then stop listening. */
@@ -249,7 +249,6 @@ export class LocalDocument {
     this.doc.off("update", this.onUpdate);
     this.doc.getText(TITLE_FIELD).unobserve(this.onTitle);
     void this.flushRemote();
-    if (this.titleTimer) clearTimeout(this.titleTimer);
     this.emitChange();
   }
 
@@ -294,15 +293,31 @@ export class LocalDocument {
     this.editListeners.forEach((listener) => listener(edit));
   }
 
+  /**
+   * Save the title on the device as soon as it changes, so a reload right
+   * after a rename still finds it (the sidebar prefers it while the server's
+   * list lags, issue #2). One write at a time; changes made meanwhile go in
+   * one more write with the latest title, so typing never queues a write
+   * per keystroke.
+   */
   private onTitle = (): void => {
     if (!this.writable) return;
-    if (this.titleTimer) clearTimeout(this.titleTimer);
-    this.titleTimer = setTimeout(() => {
-      this.titleTimer = null;
-      const store = this.writable;
-      if (store) void store.updateMeta(this.docId, { title: this.doc.getText(TITLE_FIELD).toString() }).catch(() => {});
-    }, TITLE_SAVE_MS);
+    // When the title changed, not when the write runs.
+    this.titleChangedAt = Date.now();
+    this.titleDirty = true;
+    this.titleWrite ??= this.writeTitle();
   };
+
+  private async writeTitle(): Promise<void> {
+    while (this.titleDirty) {
+      this.titleDirty = false;
+      const store = this.writable;
+      if (!store) break;
+      const title = this.doc.getText(TITLE_FIELD).toString();
+      await store.updateMeta(this.docId, { title, titleChangedAt: this.titleChangedAt }).catch(() => {});
+    }
+    this.titleWrite = null;
+  }
 
   private emitChange(): void {
     this.changeListeners.forEach((listener) => listener());

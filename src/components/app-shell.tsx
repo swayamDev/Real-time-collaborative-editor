@@ -15,6 +15,7 @@ import { getLocalStore } from "@/lib/collab/device-store";
 import { pruneInaccessible } from "@/lib/collab/prune";
 import { authClient } from "@/lib/auth-client";
 import { DATA_REMOVED, DATA_REMOVED_DETAIL } from "@/lib/copy";
+import { type TitleOverride, withKnownTitles } from "@/lib/document-titles";
 import {
   SESSION_CHANNEL,
   type SessionMessage,
@@ -25,6 +26,7 @@ import {
 import { SIDEBAR_COOKIE, THEME_COOKIE, type Theme, writePreferenceCookie } from "@/lib/preferences";
 import type { DocumentSummary } from "@/server/documents";
 import { Sidebar } from "./sidebar";
+import { useDeviceDocuments } from "./use-device";
 
 /** The signed-in user, as the client sees it. */
 export interface ShellUser {
@@ -46,8 +48,13 @@ interface ShellContextValue {
 
 interface DocumentsContextValue {
   documents: DocumentSummary[];
-  /** Local title change, shown in the sidebar immediately. */
+  /**
+   * A title change made in this tab (a rename from the list), shown at once
+   * and kept until the server's list catches up (see document-titles.ts).
+   */
   setTitle: (id: string, title: string) => void;
+  /** The open document's title as it is typed; null when it closes. */
+  setLiveTitle: (id: string, title: string | null) => void;
   /** Record a confirmed save so the document moves to the top. */
   touch: (id: string, updatedAt: string) => void;
   remove: (id: string) => void;
@@ -100,9 +107,27 @@ export function AppShell({
     setDocuments(serverDocuments);
   }
 
+  // Titles known in this tab, kept apart from the server list so a refresh
+  // of that list (another document created, for example) cannot wipe them.
+  const [titleOverrides, setTitleOverrides] = useState<ReadonlyMap<string, TitleOverride>>(() => new Map());
   const setTitle = useCallback((id: string, title: string) => {
-    setDocuments((docs) => docs.map((doc) => (doc.id === id ? { ...doc, title } : doc)));
+    setTitleOverrides((current) => new Map(current).set(id, { title, at: Date.now(), live: false }));
   }, []);
+  const setLiveTitle = useCallback((id: string, title: string | null) => {
+    setTitleOverrides((current) => {
+      const previous = current.get(id);
+      if (title === null) {
+        // Closed: the last title stays, now weighed against the server's by time.
+        return previous?.live ? new Map(current).set(id, { ...previous, live: false }) : current;
+      }
+      return new Map(current).set(id, { title, at: Date.now(), live: true });
+    });
+  }, []);
+  const onDevice = useDeviceDocuments(user.id);
+  const listedDocuments = useMemo(
+    () => withKnownTitles(documents, titleOverrides, onDevice),
+    [documents, titleOverrides, onDevice],
+  );
 
   const touch = useCallback((id: string, updatedAt: string) => {
     setDocuments((docs) =>
@@ -177,8 +202,8 @@ export function AppShell({
   }, []);
 
   const documentsValue = useMemo(
-    () => ({ documents, setTitle, touch, remove, ensure, setRole }),
-    [documents, setTitle, touch, remove, ensure, setRole],
+    () => ({ documents: listedDocuments, setTitle, setLiveTitle, touch, remove, ensure, setRole }),
+    [listedDocuments, setTitle, setLiveTitle, touch, remove, ensure, setRole],
   );
 
   // Theme

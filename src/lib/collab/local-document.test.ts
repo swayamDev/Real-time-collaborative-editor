@@ -2,7 +2,7 @@ import { TITLE_FIELD } from "@brahma/protocol";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { LocalDocument, REMOTE_ORIGIN, TITLE_SAVE_MS } from "./local-document";
+import { LocalDocument, REMOTE_ORIGIN } from "./local-document";
 import { LocalStore } from "./local-store";
 
 const NAME = "brahma:test";
@@ -17,8 +17,8 @@ async function tab(): Promise<LocalStore> {
 }
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-/** Past the title save and the remote batch, with room to spare. */
-const AFTER_TIMERS = TITLE_SAVE_MS + 300;
+/** Past any title write and the remote batch, with room to spare. */
+const AFTER_TIMERS = 800;
 
 function remoteUpdate(text: string): Uint8Array {
   const source = new Y.Doc();
@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 describe("a deleted document stays deleted", () => {
-  it("a title save that comes due after the delete writes nothing (the CI failure)", async () => {
+  it("a title write still in flight when the document is deleted leaves nothing behind (the CI failure)", async () => {
     const store = await tab();
     const local = await LocalDocument.open(store, "doc", new Uint8Array());
     local.doc.getText(TITLE_FIELD).insert(0, "Plans");
@@ -47,7 +47,7 @@ describe("a deleted document stays deleted", () => {
     local.destroy();
   });
 
-  it("dispose drops the pending title save and remote batch, and stops later writes", async () => {
+  it("dispose drops the remote batch and stops later writes, title included", async () => {
     const store = await tab();
     const local = await LocalDocument.open(store, "doc", new Uint8Array());
     local.doc.getText("body").insert(0, "kept in memory");
@@ -87,6 +87,19 @@ describe("a deleted document stays deleted", () => {
     // Listeners hear it, so the editor turns read-only without waiting for anything else.
     expect(changes).toBe(2);
     disposed.destroy();
+  });
+
+  it("saves the title on the device at once, with when it changed, coalescing fast typing (issue #2)", async () => {
+    const store = await tab();
+    const local = await LocalDocument.open(store, "doc", new Uint8Array());
+    const before = Date.now();
+    const title = local.doc.getText(TITLE_FIELD);
+    for (const letter of "Plans") title.insert(title.length, letter);
+    await wait(50);
+    const meta = await store.getMeta("doc");
+    expect(meta?.title).toBe("Plans");
+    expect(meta?.titleChangedAt).toBeGreaterThanOrEqual(before);
+    local.destroy();
   });
 
   it("dispose waits for local edits already being written", async () => {

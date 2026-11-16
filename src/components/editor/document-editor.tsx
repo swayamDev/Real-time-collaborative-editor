@@ -94,7 +94,7 @@ export function DocumentEditor(props: DocumentEditorProps) {
 }
 
 function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, role: pageRole }: DocumentEditorProps) {
-  const { setTitle, touch, ensure, remove, setRole } = useDocuments();
+  const { setLiveTitle, touch, ensure, remove, setRole } = useDocuments();
   const { user } = useShell();
   const router = useRouter();
 
@@ -177,10 +177,12 @@ function LiveDocumentEditor({ id, initialTitle, initialUpdatedAt, initialState, 
   const onTitleChange = useCallback(
     (next: string) => {
       setLocalTitle(next);
-      setTitle(id, next);
+      setLiveTitle(id, next);
     },
-    [id, setTitle],
+    [id, setLiveTitle],
   );
+  // Leaving the document: its last title stays in the list, weighed by time.
+  useEffect(() => () => setLiveTitle(id, null), [id, setLiveTitle]);
 
   // Move this document to the top of the list once local edits are stored.
   useEffect(() => {
