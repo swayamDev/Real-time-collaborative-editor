@@ -54,10 +54,17 @@ export const documents = pgTable(
      * the sync server never writes to a tombstoned row.
      */
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    /**
+     * Set only on demo documents ("Try the demo"), which the demo system
+     * user owns: when the demo ends. Cleanup deletes a row only if this is
+     * set, in the past, and the owner is the demo user (src/server/demo.ts).
+     */
+    demoExpiresAt: timestamp("demo_expires_at", { withTimezone: true }),
   },
   (table) => [
     index("documents_live_updated_at_idx").on(table.updatedAt.desc()).where(sql`${table.deletedAt} IS NULL`),
     index("documents_owner_idx").on(table.ownerId),
+    index("documents_demo_expires_at_idx").on(table.demoExpiresAt).where(sql`${table.demoExpiresAt} IS NOT NULL`),
   ],
 );
 
