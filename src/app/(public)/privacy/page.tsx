@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { previewMetadata } from "@/lib/brand";
+
+const DESCRIPTION = "What Brahma stores about you, where it is kept, and how to have it deleted.";
 
 export const metadata: Metadata = {
-  title: "Privacy",
-  description: "What Brahma stores about you, where it is kept, and how to have it deleted.",
+  title: "Privacy policy",
+  description: DESCRIPTION,
+  ...previewMetadata("Privacy policy · Brahma", DESCRIPTION),
 };
 
 const REPOSITORY = "https://github.com/swayamDev/Real-time-collaborative-editor";

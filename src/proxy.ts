@@ -19,6 +19,9 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   // Everything except sign-in, auth endpoints, API routes (they answer 401
-  // themselves), static files and the service worker.
-  matcher: ["/((?!sign-in|api/|_next/|sw\.js|favicon\.ico).*)"],
+  // themselves), static files, the service worker, and the icons, manifest,
+  // preview image and robots.txt (public: crawlers and link previews).
+  matcher: [
+    "/((?!sign-in|api/|_next/|sw\.js|favicon\.ico|icon\.svg|apple-touch-icon\.png|icons/|og\.png|manifest\.webmanifest|robots\.txt).*)",
+  ],
 };

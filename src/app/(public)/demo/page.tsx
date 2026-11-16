@@ -2,14 +2,18 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import QRCode from "qrcode";
+import { previewMetadata } from "@/lib/brand";
 import { DemoRoomLoader } from "@/components/demo/demo-room-loader";
 import { StartDemoButton } from "@/components/demo/start-demo-button";
 import { DEMO_COOKIE, readDemoPass, writeDemoPass } from "@/server/demo";
 
+const DESCRIPTION = "Two visitors edit one document side by side, live, with one able to go offline and merge later. No account needed.";
+
 export const metadata: Metadata = {
-  title: "Demo",
-  description: "See live collaboration in Brahma without an account.",
+  title: "Try the demo",
+  description: DESCRIPTION,
   robots: { index: false },
+  ...previewMetadata("Try the Brahma demo", DESCRIPTION),
 };
 
 /**
