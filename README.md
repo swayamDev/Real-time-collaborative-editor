@@ -378,6 +378,30 @@ A client can send any `X-Forwarded-For`, and `next start` keeps it, so no client
 
 Any editor can send raw Yjs data that never went through the editor. Links may only point to http, https or mailto, wherever they are rendered, in the editor and in "Download a copy", whose HTML escapes all text and attributes. Content the schema cannot hold (an unknown node or mark) is removed by editors' clients and editing goes on; a viewer's editor works on a one-way copy, so nothing it removes is ever written. Tests send such content from a raw client and check that nothing runs or breaks in other people's browsers.
 
+### Try the demo
+
+[/demo](src/app/(public)/demo/page.tsx) shows live collaboration without an account: one temporary document, two seats side by side (Visitor A and Visitor B), each with its own sync connection and cursor. Visitor B has a Go offline switch: type in both panes, go online, and the edits merge. "Open Visitor B on another device" gives a link and a QR code; the device that opens it becomes Visitor B, and the pane it replaced can take the seat back.
+
+How it is built ([src/server/demo.ts](src/server/demo.ts), [demo-pass.ts](src/server/demo-pass.ts), [room.ts](workers/sync/src/room.ts)):
+
+- **No accounts.** Demo documents are owned by one system user that nobody can sign in as: no account or session, an address in the reserved `.invalid` domain, and sign-in links to `.invalid` addresses are refused. Demo documents have no members, so they are in nobody's lists and no real user can open one.
+- **A signed pass, not a session.** Starting a demo (a form post; a visit alone creates nothing) sets an httpOnly `brahma-demo` cookie holding the document id, the expiry, the seats (`ab`) and an HMAC. The join link carries a pass for seat `b` only. The token route issues a sync token for one seat of that one document, with a `demo` claim.
+- **The sync server keeps demos and real documents apart.** A demo token opens only a demo document, and a real user's token never opens one; both are refused as not found. Each seat keeps only its newest socket (the replaced one gets `4409`), at most two sockets in all.
+- **The panes share nothing on the page.** Demo panes keep nothing in IndexedDB and have no channel to other tabs, so every edit goes through the sync server; an end-to-end test stops the server and checks that nothing reaches the other pane.
+- **Expiry.** A demo lasts 30 minutes. Its room never writes to Postgres and erases its own storage at expiry, with the only alarm it sets; an expired demo never loads again. Starting a demo also hard deletes ended demos: every statement requires the demo owner and an expiry in the past, so a real document is never touched (tested, including a real document with an expiry set).
+
+**Limits, and why these numbers.** Demos share the free plans with real users, so they are capped well below them. From Cloudflare's [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) and [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), checked November 2026: 100,000 Durable Object requests a day (incoming WebSocket messages count 20 to 1), 100,000 SQLite rows written a day (deletes and each `setAlarm()` count), 5 million rows read, 13,000 GB-s of duration, and 100,000 Worker requests a day, all resetting at 00:00 UTC. From [Neon](https://neon.com/docs/introduction/plans): 100 compute hours (CU-hours) a month and 1 GB of storage per project.
+
+| Limit | Value | Why |
+| --- | --- | --- |
+| Demo size | 64 KB, and 300 update batches | A batch is written once and deleted at compaction, so a full demo writes about 700 rows; then the room closes with `4429` |
+| Sockets per demo | 2 (one per seat) | A second device replaces a seat instead of adding one |
+| Demos per client address | 5 an hour | Behind the trusted proxy header only |
+| Demos per day, site wide | 30 | 30 full demos write about 21,000 rows, about a fifth of the daily 100,000, leaving the rest for real documents; requests stay far lower (about 100 or fewer per demo, with messages counted 20 to 1) |
+| Length | 30 minutes | Then the room erases itself |
+
+A demo touches Postgres only to create its row, check its tokens and be deleted, so Neon compute wakes briefly once per demo; it never stores demo content. No email is sent. When a cap is reached, the demo page says the demo is busy.
+
 ### Privacy policy
 
 [/privacy](src/app/(public)/privacy/page.tsx) states, in plain language, what the app stores, where, who else handles it, the cookies, and how to have data deleted. Google requires its URL to publish the OAuth app. It is public: the request proxy lets it through without a session ([proxy.ts](src/proxy.ts)), and the service worker never keeps it in a user's page cache (`PUBLIC_PAGES` in [sw/cache-policy.mjs](sw/cache-policy.mjs)). A Playwright test checks both.
@@ -403,6 +427,8 @@ Every response carries a Content Security Policy with `frame-ancestors 'none'`, 
 - **The next person on a shared device.** Per-user storage, deleted on sign-out, and deleted for anyone else on the next confirmed sign-in, also when sign-out never ran. Cleanup runs only for a user the server confirms, so a stale or cached page cannot delete the signed-in person's data.
 - **Stale or rolled-back bundles removing newer content.** Schema versions, bounded by the deployment (see below).
 - **Leaking internal endpoints.** Shared secret, compared in constant time.
+- **The demo reaching real data.** Demo seats have no session, their tokens carry a `demo` claim for one demo document, and the sync server refuses a demo token on a real document and a real token on a demo one. Demo documents have no members and an owner nobody can sign in as. Cleanup deletes only rows owned by the demo user whose expiry has passed.
+- **The demo using up the free plans.** Size, write, socket, per-address and daily caps (see [Try the demo](#try-the-demo)).
 
 **Not protected against, or accepted:**
 
@@ -415,6 +441,8 @@ Every response carries a Content Security Policy with `frame-ancestors 'none'`, 
 - **Share links** can be opened from any site's link: the link is the capability, and sign-in is required. Turning it off revokes it.
 - **A compromised device, browser extension or email account,** and anyone with access to the servers or the database. Documents are not end-to-end encrypted; the app server and the sync server can read them.
 - **Denial of service** against the app or the sync server beyond the rate limits above.
+- **What a visitor types in a demo** is visible to anyone holding that demo's pass (the visitor, and whoever they give the join link to) for up to 30 minutes, and is not moderated. Each demo is its own document, so nobody else sees it.
+- **Without a trusted proxy header,** the daily demo cap is shared by everyone, so a flood of demo starts can use it up for the day; the demo page then says it is busy.
 
 ## Changing the document schema
 

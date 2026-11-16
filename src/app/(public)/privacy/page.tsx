@@ -44,7 +44,7 @@ export default function PrivacyPage() {
           <Link href="/sign-in">Brahma</Link>
         </p>
         <h1 className="doc-title mt-8">Privacy policy</h1>
-        <p className="mt-4 font-ui text-ui text-ink-muted">Last updated 15 November 2026</p>
+        <p className="mt-4 font-ui text-ui text-ink-muted">Last updated 16 November 2026</p>
 
         <p className="mt-8">
           Brahma is a collaborative document editor. This page explains what it stores about you, where it is kept,
@@ -75,6 +75,11 @@ export default function PrivacyPage() {
             <li>
               <strong>Sign-in links.</strong> A record of each emailed link until it is used or expires, after 10
               minutes.
+            </li>
+            <li>
+              <strong>The demo.</strong> If you try the demo, what you type in it is kept for 30 minutes, then deleted.
+              The demo needs no account and stores no name or email address. Starting one is counted against your IP
+              address, to limit how many demos one address can start.
             </li>
           </List>
           <p>
@@ -138,6 +143,11 @@ export default function PrivacyPage() {
             <li>
               <strong>brahma-theme</strong> and <strong>brahma-sidebar</strong> remember your light or dark choice and
               whether the sidebar is open (one year).
+            </li>
+            <li>
+              <strong>brahma-demo</strong>, only if you start the demo or open a demo link: which demo is yours and
+              which visitor you are. It expires when the demo ends, after 30 minutes, and cannot be read by the
+              page&apos;s scripts.
             </li>
             <li>
               <strong>Browser storage:</strong> the document copies and page copies described above, a note to finish
